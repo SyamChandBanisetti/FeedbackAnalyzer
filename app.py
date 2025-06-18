@@ -12,7 +12,7 @@ from nltk.tokenize import word_tokenize
 from nltk.util import ngrams
 import nltk
 
-# --- NLTK Data Download (More Robust) ---
+# --- NLTK Data Download (More Robust - using general Exception) ---
 # Use a placeholder to update download messages dynamically
 download_status = st.empty()
 
@@ -21,15 +21,17 @@ try:
     nltk.data.find('tokenizers/punkt')
     nltk.data.find('corpora/stopwords')
     download_status.success("NLTK data (punkt, stopwords) found and ready.")
-except nltk.downloader.DownloadError:
-    download_status.info("NLTK data (punkt and stopwords) not found. Downloading now (this may take a moment)...")
+# Catch a general Exception here to avoid the AttributeError
+except Exception as e:
+    download_status.info("NLTK data (punkt and stopwords) not found or an error occurred during check. Attempting download...")
+    st.warning(f"Initial NLTK check error: {e}. Trying to download.")
     try:
         # Download with quiet=True to prevent excessive console output
         nltk.download('punkt', quiet=True)
         nltk.download('stopwords', quiet=True)
         download_status.success("NLTK data downloaded successfully!")
-    except Exception as e:
-        download_status.error(f"Failed to download NLTK data: {e}. Please check your internet connection or try again.")
+    except Exception as download_error:
+        download_status.error(f"Failed to download NLTK data: {download_error}. Please check your internet connection or deployment environment.")
         st.stop() # Stop the app if crucial NLTK data can't be downloaded
 # --- End NLTK Data Download ---
 
