@@ -5,14 +5,16 @@ import csv
 import json
 import re
 from sklearn.feature_extraction.text import CountVectorizer
+import matplotlib.pyplot as plt
+import seaborn as sns
 import google.generativeai as genai
 
-# 🔑 Gemini API Setup
+# --- Gemini API ---
 def init_gemini(api_key):
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-2.0-flash")
+    return genai.GenerativeModel("gemini-1.5-flash")
 
-# 🔁 Preprocessing function
+# --- Preprocessing ---
 def preprocess_and_save(file):
     try:
         if file.name.endswith('.csv'):
@@ -22,7 +24,7 @@ def preprocess_and_save(file):
         else:
             st.error("Unsupported file format. Upload CSV or Excel.")
             return None, None, None
-        
+
         for col in df.select_dtypes(include=['object']):
             df[col] = df[col].astype(str).replace({r'"': '""'}, regex=True)
 
@@ -44,30 +46,44 @@ def preprocess_and_save(file):
         st.error(f"Error processing file: {e}")
         return None, None, None
 
-# 🧠 Keyword extractor
+# --- Sentiment + Keywords ---
 @st.cache_data
 def extract_keywords(texts, top_n=10):
     vectorizer = CountVectorizer(stop_words='english', max_features=top_n)
     X = vectorizer.fit_transform(texts)
     return vectorizer.get_feature_names_out().tolist()
 
-# 😐 Sentiment Classifier
 def classify_sentiment(text):
     text = text.lower()
-    if any(w in text for w in ["good", "great", "excellent", "love", "awesome"]):
+    if any(w in text for w in ["good", "great", "excellent", "love", "awesome", "nice", "amazing"]):
         return "Positive"
-    elif any(w in text for w in ["bad", "poor", "terrible", "hate", "worst"]):
+    elif any(w in text for w in ["bad", "poor", "terrible", "hate", "worst", "disappointing"]):
         return "Negative"
     elif text.strip() == "":
         return "Neutral"
     else:
         return "Neutral"
 
-# 🚀 Streamlit App
-st.set_page_config(page_title="🧠 Feedback Form Analyzer (Gemini Flash)", layout="wide")
-st.title("📋 Feedback Analyzer with Gemini Flash 2.0")
+# --- Pie chart ---
+def plot_sentiment_pie(sentiments, col):
+    fig, ax = plt.subplots()
+    sentiment_counts = pd.Series(sentiments).value_counts()
+    ax.pie(sentiment_counts, labels=sentiment_counts.index, autopct='%1.1f%%', startangle=90)
+    ax.set_title(f"Sentiment Distribution: {col}")
+    st.pyplot(fig)
 
-# 🛡️ API Key Input
+# --- Bar chart ---
+def plot_keyword_bar(keywords, col):
+    keyword_counts = pd.Series(keywords).value_counts()
+    fig, ax = plt.subplots()
+    sns.barplot(x=keyword_counts.values, y=keyword_counts.index, ax=ax, palette="Blues_r")
+    ax.set_title(f"Top Keywords: {col}")
+    st.pyplot(fig)
+
+# --- Streamlit App ---
+st.set_page_config(page_title="📋 Feedback Analyzer with Gemini", layout="wide")
+st.title("🧠 Feedback Analyzer (Gemini Flash 2.0 + Charts)")
+
 with st.sidebar:
     st.header("🔐 Gemini API Key")
     gemini_key = st.text_input("Enter your Gemini API key", type="password")
@@ -75,55 +91,84 @@ with st.sidebar:
         gemini = init_gemini(gemini_key)
         st.success("Gemini API key loaded!")
     else:
-        st.warning("Please enter your Gemini API key to continue.")
+        st.warning("Please enter your Gemini API key.")
 
-# 📁 Upload file
 uploaded_file = st.file_uploader("📤 Upload Feedback CSV or Excel", type=["csv", "xlsx"])
 
 if uploaded_file and gemini_key:
     temp_path, columns, df = preprocess_and_save(uploaded_file)
 
     if temp_path:
-        st.subheader("📄 Feedback Table")
+        st.subheader("📄 Raw Feedback Table")
         st.dataframe(df)
 
+        # Identify feedback-relevant columns
         text_cols = df.select_dtypes(include='object').columns.tolist()
         ignore_cols = ["name", "email", "id", "timestamp"]
         feedback_cols = [col for col in text_cols if col.lower() not in ignore_cols]
 
-        st.markdown("### 📊 Summary Table")
-
+        st.markdown("## 📊 Summary Table")
         summary_rows = []
+
+        # For detailed analysis
+        question_analysis = {}
+
         for col in feedback_cols:
             responses = df[col].dropna().astype(str).tolist()
             sentiments = [classify_sentiment(r) for r in responses]
+            keywords = extract_keywords(responses, top_n=10)
             pos, neg, neu = sentiments.count("Positive"), sentiments.count("Negative"), sentiments.count("Neutral")
-            total = len(responses)
-            keywords = extract_keywords(responses)
             summary_rows.append({
                 "Question": col,
-                "Total": total,
+                "Total": len(responses),
                 "👍 Positive": pos,
                 "👎 Negative": neg,
                 "😐 Neutral": neu,
                 "Top Keywords": ", ".join(keywords)
             })
 
+            question_analysis[col] = {
+                "responses": responses,
+                "sentiments": sentiments,
+                "keywords": keywords
+            }
+
         summary_df = pd.DataFrame(summary_rows)
         st.dataframe(summary_df)
 
-        # 🤖 Gemini Q&A over DataFrame
+        st.markdown("## 📈 Per-Question Insights")
+
+        for col in feedback_cols:
+            st.markdown(f"### 🔹 {col}")
+            qdata = question_analysis[col]
+
+            if len(qdata["responses"]) < 5:
+                st.info("Not enough data to generate insights.")
+                continue
+
+            col1, col2 = st.columns(2)
+            with col1:
+                plot_sentiment_pie(qdata["sentiments"], col)
+            with col2:
+                plot_keyword_bar(qdata["keywords"], col)
+
+            st.markdown("#### 🔎 Sample Responses")
+            for r in qdata["responses"][:5]:
+                st.markdown(f"- {r}")
+
+            st.divider()
+
         st.markdown("## 💬 Ask Gemini Anything About the Feedback")
 
-        user_query = st.text_area("💡 Example: 'Which question had the most negative responses?'")
+        user_query = st.text_area("💡 Example: 'What are students most unhappy about?'")
 
         if st.button("Submit Query"):
-            with st.spinner("Thinking..."):
+            with st.spinner("Gemini is analyzing..."):
                 try:
-                    context = f"""This is a feedback summary table from a form:
+                    context = f"""This is a feedback summary table:
 {summary_df.to_markdown(index=False)}
 
-Now answer this query from the user:
+Now answer this question from the user:
 {user_query}
 """
                     response = gemini.generate_content(context)
