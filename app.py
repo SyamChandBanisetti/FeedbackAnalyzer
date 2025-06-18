@@ -12,15 +12,27 @@ from nltk.tokenize import word_tokenize
 from nltk.util import ngrams
 import nltk
 
+# --- NLTK Data Download (More Robust) ---
+# Use a placeholder to update download messages dynamically
+download_status = st.empty()
 
-# Ensure NLTK data for tokenization
-# This block checks if 'punkt' is downloaded and downloads it if not.
 try:
+    # Check if 'punkt' and 'stopwords' are already downloaded
     nltk.data.find('tokenizers/punkt')
+    nltk.data.find('corpora/stopwords')
+    download_status.success("NLTK data (punkt, stopwords) found and ready.")
 except nltk.downloader.DownloadError:
-    st.info("Downloading NLTK 'punkt' tokenizer data. This will happen once.")
-    nltk.download('punkt')
-    st.success("NLTK 'punkt' tokenizer downloaded.")
+    download_status.info("NLTK data (punkt and stopwords) not found. Downloading now (this may take a moment)...")
+    try:
+        # Download with quiet=True to prevent excessive console output
+        nltk.download('punkt', quiet=True)
+        nltk.download('stopwords', quiet=True)
+        download_status.success("NLTK data downloaded successfully!")
+    except Exception as e:
+        download_status.error(f"Failed to download NLTK data: {e}. Please check your internet connection or try again.")
+        st.stop() # Stop the app if crucial NLTK data can't be downloaded
+# --- End NLTK Data Download ---
+
 
 # 🔐 Gemini Setup
 def init_gemini(api_key):
@@ -118,6 +130,7 @@ with st.sidebar:
         try:
             gemini = init_gemini(api_key)
             # Test Gemini connection
+            # Use a less restrictive safety setting for the "hello" test
             test_response = gemini.generate_content("hello", safety_settings={'HARASSMENT': 'block_none'})
             if test_response:
                 st.success("Gemini is ready and connected!")
@@ -154,7 +167,7 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
         for i, col in enumerate(selected):
             responses = df[col].astype(str).dropna().tolist()
             # Filter out very short or non-meaningful responses for analysis
-            meaningful_responses = [r for  r in responses if len(r.strip()) > 5 and not r.isnumeric()]
+            meaningful_responses = [r for r in responses if len(r.strip()) > 5 and not r.isnumeric()]
 
             # Initialize with empty lists to avoid errors if no meaningful responses
             sentiments = []
