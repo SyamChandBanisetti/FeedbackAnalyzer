@@ -12,6 +12,7 @@ from nltk.tokenize import word_tokenize
 from nltk.util import ngrams
 import nltk
 
+
 # Ensure NLTK data for tokenization
 # This block checks if 'punkt' is downloaded and downloads it if not.
 try:
