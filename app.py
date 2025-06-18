@@ -128,12 +128,12 @@ if uploaded and api_key:
                     st.markdown("### 🧠 Gemini Summary")
                     try:
                         sample = "\n".join(pd.Series(responses).dropna().sample(min(15, len(responses)), random_state=42))
-                        prompt = f"""You're a feedback analyst. Summarize the key themes, sentiment (positive, negative, neutral), and actionable improvements from the following responses to the question: "{col}". Make the summary detailed but concise, highlighting the most important aspects for a business user.
+                        prompt = f"""Provide a concise summary of the key themes, sentiment (positive, negative, neutral), and main actionable insights from these responses to the question: "{col}". Focus on brevity and directness.
 
                         Feedbacks:
                         {sample}"""
                         reply = gemini.generate_content(prompt)
-                        st.info(reply.text.strip()) # Removed character limit for fuller summary
+                        st.info(reply.text.strip())
                     except Exception as e:
                         st.error(f"Gemini Error: {e}")
 
@@ -165,6 +165,6 @@ if uploaded and api_key:
                 prompt = f"""You're a feedback report analyst. Given this summary table:\n\n{tabular}\n\nAnswer this question:\n{userq}\n\nProvide a concise and direct answer, focusing on actionable insights derived from the data."""
                 final = gemini.generate_content(prompt)
                 st.markdown("### 🧠 Gemini Answer")
-                st.info(final.text.strip()) # Removed character limit
+                st.info(final.text.strip())
             except Exception as e:
                 st.error(f"Gemini Error: {e}")
