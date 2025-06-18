@@ -12,28 +12,37 @@ from nltk.tokenize import word_tokenize
 from nltk.util import ngrams
 import nltk
 
-# --- NLTK Data Download (More Robust - using general Exception) ---
+# --- NLTK Data Download and Setup ---
 # Use a placeholder to update download messages dynamically
-download_status = st.empty()
+download_status_placeholder = st.empty()
 
 try:
-    # Check if 'punkt' and 'stopwords' are already downloaded
+    # Attempt to find the required NLTK data.
+    # If not found, a DownloadError will be raised by find().
     nltk.data.find('tokenizers/punkt')
     nltk.data.find('corpora/stopwords')
-    download_status.success("NLTK data (punkt, stopwords) found and ready.")
-# Catch a general Exception here to avoid the AttributeError
-except Exception as e:
-    download_status.info("NLTK data (punkt and stopwords) not found or an error occurred during check. Attempting download...")
-    st.warning(f"Initial NLTK check error: {e}. Trying to download.")
+    download_status_placeholder.success("NLTK data (punkt, stopwords) found and ready.")
+except Exception as e: # Catch any exception, including DownloadError or others
+    download_status_placeholder.warning(f"NLTK data not fully found or error during check: {e}. Attempting download...")
     try:
-        # Download with quiet=True to prevent excessive console output
+        # Download with quiet=True to prevent excessive console output in console
+        # Use an empty st.empty() to clear the message once downloaded.
         nltk.download('punkt', quiet=True)
         nltk.download('stopwords', quiet=True)
-        download_status.success("NLTK data downloaded successfully!")
+        download_status_placeholder.success("NLTK data downloaded successfully and ready!")
     except Exception as download_error:
-        download_status.error(f"Failed to download NLTK data: {download_error}. Please check your internet connection or deployment environment.")
+        download_status_placeholder.error(f"Failed to download NLTK data: {download_error}. Please check your internet connection or deployment environment.")
         st.stop() # Stop the app if crucial NLTK data can't be downloaded
-# --- End NLTK Data Download ---
+
+# Initialize stop_words *after* ensuring NLTK stopwords are available
+try:
+    STOP_WORDS = set(nltk.corpus.stopwords.words('english') + list(string.punctuation))
+except LookupError:
+    # This block should ideally not be reached if the above download succeeded
+    st.error("NLTK stopwords data not available even after download attempt. Please restart the app.")
+    st.stop() # Crucial dependency, stop if it fails
+
+# --- End NLTK Data Download and Setup ---
 
 
 # 🔐 Gemini Setup
@@ -102,15 +111,14 @@ def extract_keywords_tfidf(texts, top_n=10):
 @st.cache_data
 def extract_ngrams(texts, n=2, top_n=10):
     all_ngrams = []
-    # Using a more comprehensive stop word list
-    stop_words = set(nltk.corpus.stopwords.words('english') + list(string.punctuation))
     
     for text in texts:
         # Clean text: remove numbers, convert to lower, tokenize, filter stop words and short tokens
         cleaned_text = re.sub(r'\d+', '', text.lower()) # Remove numbers
         cleaned_text = re.sub(rf"[{string.punctuation}]", "", cleaned_text) # Remove punctuation
         tokens = word_tokenize(cleaned_text)
-        filtered_tokens = [word for word in tokens if word.isalpha() and word not in stop_words and len(word) > 1] # len > 1 to remove single letters
+        # Use the globally initialized STOP_WORDS
+        filtered_tokens = [word for word in tokens if word.isalpha() and word not in STOP_WORDS and len(word) > 1] # len > 1 to remove single letters
         
         if len(filtered_tokens) >= n: # Ensure enough tokens to form n-grams
             all_ngrams.extend(list(ngrams(filtered_tokens, n)))
@@ -132,7 +140,6 @@ with st.sidebar:
         try:
             gemini = init_gemini(api_key)
             # Test Gemini connection
-            # Use a less restrictive safety setting for the "hello" test
             test_response = gemini.generate_content("hello", safety_settings={'HARASSMENT': 'block_none'})
             if test_response:
                 st.success("Gemini is ready and connected!")
@@ -215,7 +222,7 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                         st.markdown("### 🔤 Top Keywords")
                         if kws: # Check if kws is not empty
                             keyword_strings = [f"- **{kw}** (Score: {score:.2f})" for kw, score in kws]
-                            st.markdown("\n".join(keyword_strings))
+                            st.markdown("\n".어로".join(keyword_strings))
                         else:
                             st.info("No significant keywords found for this question.")
 
