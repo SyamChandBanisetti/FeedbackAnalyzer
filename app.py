@@ -13,10 +13,11 @@ from agno.models.openai import OpenAIChat # Agno agent's reasoning model (requir
 from agno.agent import Agent # Generic Agno agent
 from agno.tools import Tool # Base tool class for custom tools
 
-# --- Configuration & API Key Setup ---
+# --- Streamlit Page Configuration ---
 st.set_page_config(layout="wide", page_title="📝 AI Feedback Analyst Agent")
 
-# Session state initialization for analysis results and agent
+# --- Session State Initialization ---
+# This ensures variables persist across reruns
 if "analysis_results" not in st.session_state:
     st.session_state.analysis_results = {
         "sampled_analysis_df": pd.DataFrame(),
@@ -27,48 +28,92 @@ if "agno_feedback_agent" not in st.session_state:
     st.session_state.agno_feedback_agent = None
 if "agent_chat_history" not in st.session_state:
     st.session_state.agent_chat_history = []
+if "gemini_model" not in st.session_state:
+    st.session_state.gemini_model = None
+if "gemini_api_key_set" not in st.session_state:
+    st.session_state.gemini_api_key_set = False
+if "openai_api_key_set" not in st.session_state:
+    st.session_state.openai_api_key_set = False
 
-# Sidebar for API keys
-with st.sidebar:
-    st.header("API Keys Configuration")
-    
-    # Gemini API Key (for analysis functions)
-    gemini_api_key = st.text_input("Enter your **Gemini API Key**:", type="password", key="gemini_api_key_input",
-                                   help="Required for sentiment analysis, summarization, and recommendations. Not stored.")
-    if not gemini_api_key:
-        # Try to load from Streamlit secrets for deployment
-        try:
-            gemini_api_key = st.secrets["GOOGLE_API_KEY"]
-            st.info("Gemini API key loaded from Streamlit secrets.")
-        except KeyError:
-            st.warning("Please provide your Gemini API key in the sidebar or Streamlit secrets.")
-    
-    # OpenAI API Key (for Agno Agent's reasoning)
-    openai_api_key = st.text_input("Enter your **OpenAI API Key**:", type="password", key="openai_api_key_input",
-                                   help="Required for the AI agent's understanding and response generation. Not stored.")
-    if not openai_api_key:
-        # Try to load from environment variable (e.g., from Render.com)
-        if "OPENAI_API_KEY" in os.environ:
-            openai_api_key = os.environ["OPENAI_API_KEY"]
-            st.info("OpenAI API key loaded from environment variables.")
-        else:
-            st.warning("Please provide your OpenAI API key in the sidebar or as an environment variable for the agent.")
+# --- Main App Title and Introduction ---
+st.title("📝 AI Feedback Analyst Agent")
+st.markdown("Upload your customer feedback data, and an AI agent will analyze it using Gemini 2.0 Flash and answer your questions.")
 
-    st.markdown("---")
-    if gemini_api_key and openai_api_key:
-        st.success("Both API keys are set! You can now upload your file and run analysis.")
-        # Initialize Gemini model
-        genai.configure(api_key=gemini_api_key)
+# --- API Key Input Section (Mandatory First Step) ---
+st.header("🔑 Enter Your API Keys to Start")
+st.info("Both Gemini and OpenAI API keys are required for full functionality. Your keys are used only for the current session and are not stored.")
+
+gemini_api_key_input = st.text_input(
+    "**Gemini API Key:** (for analysis functions)", 
+    type="password", 
+    key="gemini_api_key_form",
+    help="Get your Gemini API key from Google AI Studio. It powers sentiment analysis, summarization, and recommendations."
+)
+openai_api_key_input = st.text_input(
+    "**OpenAI API Key:** (for the AI Agent)", 
+    type="password", 
+    key="openai_api_key_form",
+    help="Get your OpenAI API key from OpenAI Platform. It powers the conversational AI agent's reasoning and tool use."
+)
+
+# Check for API keys from Streamlit secrets (for deployment) or environment variables
+if not gemini_api_key_input:
+    try:
+        gemini_api_key_input = st.secrets["GOOGLE_API_KEY"]
+    except KeyError:
+        pass # Will remain empty if not in secrets
+
+if not openai_api_key_input:
+    openai_api_key_input = os.getenv("OPENAI_API_KEY")
+
+
+# Logic to set API keys and proceed
+if gemini_api_key_input:
+    try:
+        genai.configure(api_key=gemini_api_key_input)
         st.session_state.gemini_model = genai.GenerativeModel("gemini-2.0-flash")
-    elif gemini_api_key:
-        st.warning("OpenAI API key is missing. Agent chat will not function.")
-        genai.configure(api_key=gemini_api_key)
-        st.session_state.gemini_model = genai.GenerativeModel("gemini-2.0-flash")
-    else:
-        st.warning("Gemini API key is missing. Analysis functions will not work.")
+        st.session_state.gemini_api_key_set = True
+    except Exception as e:
+        st.error(f"Invalid Gemini API Key: {e}. Please check your key.")
+        st.session_state.gemini_api_key_set = False
         st.session_state.gemini_model = None
+else:
+    st.session_state.gemini_api_key_set = False
 
-# --- Helper Functions (Gemini powered) ---
+if openai_api_key_input:
+    try:
+        # We don't directly "configure" agno.models.openai like genai.configure
+        # The key is passed directly to the model instance.
+        st.session_state.openai_api_key = openai_api_key_input
+        st.session_state.openai_api_key_set = True
+    except Exception as e:
+        st.error(f"Issue with OpenAI API Key configuration: {e}. Please check your key.")
+        st.session_state.openai_api_key_set = False
+else:
+    st.session_state.openai_api_key_set = False
+
+
+# Proceed only if both keys are set
+if not (st.session_state.gemini_api_key_set and st.session_state.openai_api_key_set):
+    st.warning("Please enter both valid API keys above to unlock the application features.")
+    # Show example data structure even if keys are not set
+    st.markdown("---")
+    st.markdown("### Example Data Structure:")
+    sample_data = pd.DataFrame({
+        "Timestamp": ["2024-06-01", "2024-06-02", "2024-06-03"],
+        "Customer Feedback": [
+            "The new app update is fantastic! So much faster and intuitive.",
+            "Customer support was very slow, took ages to get a reply. Disappointed.",
+            "Product features are good, but the pricing is too high."
+        ],
+        "Rating (1-5)": [5, 2, 4]
+    })
+    st.dataframe(sample_data, use_container_width=True)
+    st.markdown("*(Your file can have many columns, but at least one should contain open-ended text feedback)*")
+    st.stop() # Stop execution here if keys are missing
+
+
+# --- Helper Functions (Gemini powered - unchanged) ---
 @st.cache_data(show_spinner=False)
 def get_sentiment_and_score(text_series_input, gemini_model_instance):
     """
@@ -188,12 +233,9 @@ class FeedbackAnalysisTools(Tool):
         self.register(self.get_actionable_recommendations)
 
     def _get_analysis_status(self):
-        if st.session_state.analysis_results["sampled_analysis_df"].empty:
+        # Check if sampled_analysis_df is populated and not empty
+        if st.session_state.analysis_results["sampled_analysis_df"].empty or st.session_state.analysis_results["sampled_analysis_df"].iloc[0].isnull().all():
             return "No feedback data has been analyzed yet. Please upload a file and click 'Run AI Analysis' first."
-        if not st.session_state.analysis_results["summary_themes"].strip():
-            return "Key themes summary has not been generated yet."
-        if not st.session_state.analysis_results["recommendations"].strip():
-            return "Actionable recommendations have not been generated yet."
         return None # All data is available
 
     @Tool
@@ -224,7 +266,10 @@ class FeedbackAnalysisTools(Tool):
         """
         status = self._get_analysis_status()
         if status: return status
-        return st.session_state.analysis_results["summary_themes"]
+        summary = st.session_state.analysis_results["summary_themes"]
+        if not summary.strip():
+            return "Key themes summary has not been generated yet or is empty."
+        return summary
 
     @Tool
     def get_actionable_recommendations(self) -> str:
@@ -234,21 +279,64 @@ class FeedbackAnalysisTools(Tool):
         """
         status = self._get_analysis_status()
         if status: return status
-        return st.session_state.analysis_results["recommendations"]
+        recommendations = st.session_state.analysis_results["recommendations"]
+        if not recommendations.strip() or "No negative feedback" in recommendations:
+            return "Actionable recommendations have not been generated yet, or there was no significant negative feedback to base them on."
+        return recommendations
 
-# --- Main App Body ---
-st.header("Upload Data")
+
+# --- Preprocessing Function (unchanged) ---
+@st.cache_data(show_spinner=False)
+def preprocess_and_save(file_content, file_name):
+    """
+    Preprocesses the uploaded file content and saves it to a temporary CSV.
+    Returns the temporary file path, column names, and the DataFrame.
+    Uses st.cache_data to avoid re-processing on every rerun.
+    """
+    try:
+        if file_name.endswith('.csv'):
+            df = pd.read_csv(file_content, encoding='utf-8', na_values=['NA', 'N/A', 'missing'])
+        elif file_name.endswith('.xlsx'):
+            df = pd.read_excel(file_content, na_values=['NA', 'N/A', 'missing'])
+        else:
+            st.error("Unsupported file format. Please upload a CSV or Excel file.")
+            return None, None, None
+        
+        for col in df.select_dtypes(include=['object']).columns:
+            df[col] = df[col].astype(str).replace({r'"': '""'}, regex=True).str.strip()
+            df[col] = df[col].replace({'': pd.NA})
+        
+        for col in df.columns:
+            if 'date' in col.lower():
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            elif df[col].dtype == 'object':
+                try:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                except (ValueError, TypeError):
+                    pass
+        
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".csv", encoding='utf-8') as temp_file:
+            temp_path = temp_file.name
+            df.to_csv(temp_path, index=False, quoting=csv.QUOTE_ALL)
+        
+        return temp_path, df.columns.tolist(), df
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+        return None, None, None
+
+
+# --- Main Application Logic (after API keys are set) ---
+st.markdown("---")
+st.header("📤 Upload Your Feedback Data")
 uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
 
 if uploaded_file is not None:
-    # Read file content once
     file_bytes_data = uploaded_file.getvalue()
 
-    # Use a unique file_id to detect if a new file was uploaded
     if "last_uploaded_file_id" not in st.session_state or st.session_state.last_uploaded_file_id != uploaded_file.file_id:
         st.session_state.last_uploaded_file_id = uploaded_file.file_id
-        st.session_state.df_loaded = False # Flag to re-trigger preprocessing
-        st.session_state.analysis_results = { # Reset analysis results
+        st.session_state.df_loaded = False
+        st.session_state.analysis_results = { # Reset results for new file
             "sampled_analysis_df": pd.DataFrame(),
             "summary_themes": "",
             "recommendations": ""
@@ -257,22 +345,19 @@ if uploaded_file is not None:
         st.session_state.agno_feedback_agent = None # Reset agent instance
 
     if not st.session_state.get("df_loaded", False):
-        if not st.session_state.get("gemini_model"):
-            st.error("Gemini API key is required to preprocess and analyze the file. Please provide it in the sidebar.")
+        with st.spinner("Preprocessing your file... This might take a moment for large files."):
+            temp_file_content_io = io.BytesIO(file_bytes_data)
+            temp_path, columns, df = preprocess_and_save(temp_file_content_io, uploaded_file.name)
+        
+        if temp_path and columns and df is not None:
+            st.session_state.temp_path = temp_path
+            st.session_state.df_columns = columns
+            st.session_state.original_df = df
+            st.session_state.df_loaded = True
+            st.success("File preprocessed successfully! Now configure analysis and run it.")
         else:
-            with st.spinner("Preprocessing your file..."):
-                temp_file_content_io = io.BytesIO(file_bytes_data)
-                temp_path, columns, df = preprocess_and_save(temp_file_content_io, uploaded_file.name)
-            
-            if temp_path and columns and df is not None:
-                st.session_state.temp_path = temp_path
-                st.session_state.df_columns = columns
-                st.session_state.original_df = df
-                st.session_state.df_loaded = True
-                st.success("File preprocessed successfully! Now select a column and run analysis.")
-            else:
-                st.session_state.df_loaded = False
-                st.error("Failed to preprocess file. Please check its content and format.")
+            st.session_state.df_loaded = False
+            st.error("Failed to preprocess file. Please check its content and format.")
 
     if st.session_state.get("df_loaded", False):
         df = st.session_state.original_df
@@ -284,7 +369,7 @@ if uploaded_file is not None:
             st.write(st.session_state.df_columns)
 
         st.markdown("---")
-        st.header("Analysis Configuration")
+        st.header("⚙️ Analysis Configuration")
         col1_config, col2_config, col3_config = st.columns(3)
 
         with col1_config:
@@ -310,19 +395,18 @@ if uploaded_file is not None:
             )
 
         if st.button("🚀 Run AI Analysis", use_container_width=True):
-            if not st.session_state.get("gemini_model"):
-                st.error("Gemini API key is required to run analysis. Please provide it in the sidebar.")
+            if not st.session_state.get("gemini_api_key_set"):
+                st.error("Gemini API key is not set. Please provide it in the API Key section above.")
             elif selected_column:
                 st.markdown("---")
-                st.header("Analysis Results")
+                st.header("📈 Analysis Results")
                 
-                # Sample the responses for LLM processing
                 responses_to_analyze = df[selected_column].dropna().sample(
                     n=min(len(df[selected_column].dropna()), max_rows_for_llm), random_state=42
                 )
                 if responses_to_analyze.empty:
                     st.info("No valid responses found in the selected sample for analysis.")
-                    st.session_state.analysis_results = {**st.session_state.analysis_results, "sampled_analysis_df": pd.DataFrame()} # Clear
+                    st.session_state.analysis_results = {**st.session_state.analysis_results, "sampled_analysis_df": pd.DataFrame()}
                     st.stop()
 
                 # --- 1. Sentiment Analysis ---
@@ -335,7 +419,7 @@ if uploaded_file is not None:
                     'sentiment': sentiments,
                     'score': scores
                 })
-                st.session_state.analysis_results["sampled_analysis_df"] = sampled_analysis_df # Store for agent
+                st.session_state.analysis_results["sampled_analysis_df"] = sampled_analysis_df
 
                 if not sampled_analysis_df.empty:
                     sentiment_counts = sampled_analysis_df['sentiment'].value_counts().reset_index()
@@ -361,7 +445,7 @@ if uploaded_file is not None:
                 with st.spinner("Summarizing key themes..."):
                     summary_themes = summarize_feedback_themes_llm(responses_to_analyze.tolist(), llm_creativity, st.session_state.gemini_model)
                     st.success(summary_themes)
-                    st.session_state.analysis_results["summary_themes"] = summary_themes # Store for agent
+                    st.session_state.analysis_results["summary_themes"] = summary_themes
 
                 # --- 4. Actionable Recommendations from Negative Feedback ---
                 st.subheader("4. Actionable Recommendations (from Negative Feedback)")
@@ -372,7 +456,7 @@ if uploaded_file is not None:
                         negative_summary_for_recs = summarize_feedback_themes_llm(negative_responses_sampled, llm_creativity, st.session_state.gemini_model)
                         recommendations = generate_recommendations_llm(negative_summary_for_recs, llm_creativity, st.session_state.gemini_model)
                         st.warning(recommendations)
-                        st.session_state.analysis_results["recommendations"] = recommendations # Store for agent
+                        st.session_state.analysis_results["recommendations"] = recommendations
                 else:
                     st.info("No negative feedback identified in the sample to generate recommendations.")
                     st.session_state.analysis_results["recommendations"] = "No negative feedback to generate recommendations."
@@ -386,11 +470,11 @@ st.markdown("---")
 st.header("💬 Chat with AI Feedback Agent")
 st.markdown("Ask the agent questions about the analyzed feedback (e.g., 'What is the overall sentiment?', 'Can you summarize the main themes?', 'What are the recommendations for improvement?').")
 
-if st.session_state.get("openai_key"):
-    # Initialize Agno agent if not already initialized or if API key changed
-    if st.session_state.agno_feedback_agent is None or st.session_state.agno_feedback_agent.model.api_key != st.session_state.openai_key:
+if st.session_state.get("openai_api_key_set"):
+    # Initialize Agno agent if not already initialized or if OpenAI key changed
+    if st.session_state.agno_feedback_agent is None or st.session_state.agno_feedback_agent.model.api_key != st.session_state.openai_api_key:
         st.session_state.agno_feedback_agent = Agent(
-            model=OpenAIChat(model="gpt-4o", api_key=st.session_state.openai_key),
+            model=OpenAIChat(model="gpt-4o", api_key=st.session_state.openai_api_key),
             tools=[FeedbackAnalysisTools()],
             markdown=True,
             add_history_to_messages=True, # Enable chat history for better agent context
@@ -418,16 +502,12 @@ if st.session_state.get("openai_key"):
 
         with st.spinner("Agent is thinking..."):
             try:
-                # Agno agent's run method takes the query and internal chat history (if enabled)
-                # It does not take external chat history like LangChain's invoke.
-                # Agno manages its history internally if add_history_to_messages is True
                 agent_response = st.session_state.agno_feedback_agent.run(user_query_agent)
                 
-                # The response from agno.agent.run is often an object. Extract content.
                 if hasattr(agent_response, 'content'):
                     response_content = agent_response.content
                 else:
-                    response_content = str(agent_response) # Fallback
+                    response_content = str(agent_response)
 
                 st.session_state.agent_chat_history.append({"role": "assistant", "content": response_content})
                 with st.chat_message("assistant"):
@@ -437,31 +517,13 @@ if st.session_state.get("openai_key"):
                 st.error(error_message)
                 st.session_state.agent_chat_history.append({"role": "assistant", "content": "Sorry, I couldn't process that request. " + str(e)})
 else:
-    st.info("Provide your OpenAI API key in the sidebar to enable the AI Agent chat.")
+    st.info("Provide your OpenAI API key in the 'Enter Your API Keys to Start' section above to enable the AI Agent chat.")
     st.session_state.agent_chat_history = [] # Clear history if keys are removed/missing
-
-# --- Initial Message for New Sessions ---
-if uploaded_file is None and "original_df" not in st.session_state:
-    st.markdown("---")
-    st.markdown("### Example Data Structure:")
-    sample_data = pd.DataFrame({
-        "Timestamp": ["2024-06-01", "2024-06-02", "2024-06-03"],
-        "Customer Feedback": [
-            "The new app update is fantastic! So much faster and intuitive.",
-            "Customer support was very slow, took ages to get a reply. Disappointed.",
-            "Product features are good, but the pricing is too high."
-        ],
-        "Rating (1-5)": [5, 2, 4]
-    })
-    st.dataframe(sample_data, use_container_width=True)
-    st.markdown("*(Your file can have many columns, but at least one should contain open-ended text feedback)*")
 
 # --- Cleanup temporary file on app close or rerun (best effort) ---
 # This attempts to clean up the temp file. Streamlit's lifecycle can make perfect cleanup tricky.
 # For production, consider persistent storage if temporary files are an issue.
 if 'temp_path' in st.session_state and os.path.exists(st.session_state.temp_path):
-    # Only delete if the session is essentially done with the file,
-    # or if a new file is uploaded (handled by df_loaded flag)
     if uploaded_file is None or not st.session_state.get('df_loaded', False):
         try:
             os.remove(st.session_state.temp_path)
