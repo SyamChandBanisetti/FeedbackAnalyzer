@@ -92,6 +92,7 @@ if uploaded and api_key:
         text_cols = [c for c in df.select_dtypes(include='object').columns if c.lower() not in ignore]
 
         # 🎯 Select Questions
+        st.markdown("---")
         st.markdown("## ✅ Select Questions to Analyze")
         selected = st.multiselect("Choose Questions", text_cols, default=text_cols[:2])
 
@@ -100,65 +101,66 @@ if uploaded and api_key:
         for i, col in enumerate(selected):
             responses = df[col].astype(str).dropna().tolist()
             sentiments = classify_sentiments(responses)
+            kws = extract_keywords_tfidf(responses)
 
             with st.expander(f"🔍 Analysis: {col}", expanded=True):
-                # Show Toggles
-                pie = st.checkbox("📊 Sentiment Pie", value=True, key=f"pie_{i}")
-                tfidf = st.checkbox("🔤 Top Keywords", value=True, key=f"kw_{i}")
-                freq = st.checkbox("📋 Frequent Responses", key=f"freq_{i}")
-                gemsum = st.checkbox("🧠 Gemini Summary", value=True, key=f"sum_{i}")
+                st.markdown("---")
+                st.markdown("### 📊 Sentiment Breakdown")
+                pie_df = pd.DataFrame(Counter(sentiments).items(), columns=["Sentiment", "Count"])
+                fig = px.pie(pie_df, names="Sentiment", values="Count", title="Sentiment Breakdown")
+                st.plotly_chart(fig, use_container_width=True)
 
-                if pie:
-                    pie_df = pd.DataFrame(Counter(sentiments).items(), columns=["Sentiment", "Count"])
-                    fig = px.pie(pie_df, names="Sentiment", values="Count", title="Sentiment Breakdown")
-                    st.plotly_chart(fig, use_container_width=True)
+                st.markdown("---")
+                st.markdown("### 🔤 Top Keywords")
+                kw_df = pd.DataFrame(kws, columns=["Keyword", "Score"])
+                fig = px.bar(kw_df, x="Keyword", y="Score", title="TF-IDF Keywords")
+                st.plotly_chart(fig, use_container_width=True)
 
-                if tfidf:
-                    kws = extract_keywords_tfidf(responses)
-                    kw_df = pd.DataFrame(kws, columns=["Keyword", "Score"])
-                    fig = px.bar(kw_df, x="Keyword", y="Score", title="TF-IDF Keywords")
-                    st.plotly_chart(fig, use_container_width=True)
+                st.markdown("---")
+                st.markdown("### 📋 Frequent Responses")
+                freq_df = pd.Series(responses).value_counts().reset_index()
+                freq_df.columns = ["Response", "Count"]
+                freq_df = freq_df[freq_df["Response"].str.len() > 10]
+                st.dataframe(freq_df.head(10), use_container_width=True)
 
-                if freq:
-                    freq_df = pd.Series(responses).value_counts().reset_index()
-                    freq_df.columns = ["Response", "Count"]
-                    freq_df = freq_df[freq_df["Response"].str.len() > 10]
-                    st.dataframe(freq_df.head(10), use_container_width=True)
-
-                if gemsum:
-                    try:
-                        sample = "\n".join(pd.Series(responses).dropna().sample(min(15, len(responses)), random_state=42))
-                        prompt = f"""You're a feedback analyst. Summarize the responses to the question: "{col}". Mention key themes, positives, negatives, and improvements.\n\nFeedbacks:\n{sample}"""
-                        reply = gemini.generate_content(prompt)
-                        st.markdown("#### 🤖 Gemini Summary")
-                        st.markdown(reply.text.strip()[:1000])  # Show partial output only
-                    except Exception as e:
-                        st.error(f"Gemini Error: {e}")
+                st.markdown("---")
+                st.markdown("### 🧠 Gemini Summary")
+                try:
+                    sample = "\n".join(pd.Series(responses).dropna().sample(min(15, len(responses)), random_state=42))
+                    prompt = f"""You're a feedback analyst. Summarize the responses to the question: "{col}". Mention key themes, positives, negatives, and improvements. Ensure the summary is straight to the point and easy for a user to understand.\n\nFeedbacks:\n{sample}"""
+                    reply = gemini.generate_content(prompt)
+                    st.info(reply.text.strip()[:1000])  # Show partial output only in an info box
+                except Exception as e:
+                    st.error(f"Gemini Error: {e}")
 
             # Collect for overall summary
             summary_data.append({
                 "Question": col,
-                "Total": len(responses),
+                "Total Responses": len(responses),
                 "👍 Positive": sentiments.count("Positive"),
                 "👎 Negative": sentiments.count("Negative"),
                 "😐 Neutral": sentiments.count("Neutral"),
                 "Top Keywords": ", ".join([kw for kw, _ in kws if kw != "No keywords"])
             })
 
+        # ---
         # 📋 Overall Summary Table
+        st.markdown("---")
         st.markdown("## 🧾 Overall Feedback Summary")
         summary_df = pd.DataFrame(summary_data)
         st.dataframe(summary_df, use_container_width=True)
 
+        # ---
         # 💬 Ask Gemini
+        st.markdown("---")
         st.markdown("## 💬 Ask Gemini About All Feedback")
-        userq = st.text_input("Ask your question about the feedback")
+        userq = st.text_input("Ask your question about the feedback insights")
         if st.button("Ask Gemini"):
             try:
                 tabular = summary_df.to_markdown(index=False)
-                prompt = f"""You're a feedback report analyst. Given this summary table:\n\n{tabular}\n\nAnswer this question:\n{userq}"""
+                prompt = f"""You're a feedback report analyst. Given this summary table:\n\n{tabular}\n\nAnswer this question:\n{userq}\n\nProvide a concise and direct answer."""
                 final = gemini.generate_content(prompt)
                 st.markdown("### 🧠 Gemini Answer")
-                st.info(final.text.strip()[:1000])
+                st.info(final.text.strip()[:1000]) # Display in an info box
             except Exception as e:
                 st.error(f"Gemini Error: {e}")
