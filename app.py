@@ -10,10 +10,6 @@ from collections import Counter
 import google.generativeai as genai
 import os
 
-# --- New Imports for Word Cloud ---
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
-
 # --- NLTK Replacement: Simple Tokenization and Stop Words ---
 
 # A basic list of English stop words. This is not as comprehensive as NLTK's,
@@ -44,12 +40,6 @@ def simple_tokenize(text):
     cleaned_text = re.sub(rf"[{re.escape(string.punctuation)}]", "", cleaned_text) # Remove punctuation
     tokens = cleaned_text.split() # Split by whitespace
     return [token for token in tokens if token.strip()] # Remove empty strings from splitting
-
-# Simple n-grams function (replaces nltk.util.ngrams)
-def simple_ngrams(tokens, n):
-    if len(tokens) < n:
-        return []
-    return [tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]
 
 # --- End NLTK Replacement ---
 
@@ -99,7 +89,6 @@ def classify_sentiments(texts):
 @st.cache_data
 def extract_keywords_tfidf(texts, top_n=10):
     # Ensure texts are not empty or contain only whitespace after cleaning
-    # Using simple_tokenize to align with the N-gram extraction
     processed_texts = [" ".join([token for token in simple_tokenize(t) if token not in STOP_WORDS and len(token) > 1]) for t in texts if len(t.strip()) > 2]
     processed_texts = [t for t in processed_texts if t and not t.isspace()]
 
@@ -118,50 +107,6 @@ def extract_keywords_tfidf(texts, top_n=10):
     except Exception as e:
         st.error(f"An unexpected error occurred during keyword extraction: {e}")
         return []
-
-# 🔄 N-Gram Analysis
-@st.cache_data
-def extract_ngrams(texts, n=2, top_n=10):
-    all_ngrams = []
-    
-    for text in texts:
-        tokens = simple_tokenize(text)
-        filtered_tokens = [word for word in tokens if word not in STOP_WORDS and len(word) > 1]
-        
-        if len(filtered_tokens) >= n: # Ensure enough tokens to form n-grams
-            all_ngrams.extend(simple_ngrams(filtered_tokens, n))
-
-    ngram_counts = Counter(all_ngrams)
-    # Convert tuple n-grams to string for display
-    return [(" ".join(ngram), count) for ngram, count in ngram_counts.most_common(top_n)]
-
-# Function to generate and display word cloud
-@st.cache_data
-def generate_and_display_wordcloud(texts):
-    # Ensure a minimum amount of text for a meaningful word cloud
-    combined_text = " ".join([t for t in texts if len(t.strip()) > 5])
-    
-    if not combined_text or len(combined_text.split()) < 10: # At least 10 words for a meaningful cloud
-        st.info("Not enough diverse text to generate a meaningful word cloud.")
-        return
-
-    wordcloud = WordCloud(
-        width=800,
-        height=400,
-        background_color="white",
-        stopwords=STOP_WORDS, # Use our custom STOP_WORDS
-        min_font_size=10,
-        max_words=100,
-        collocations=False # To avoid showing phrases from bigrams/trigrams too prominently in single words
-    ).generate(combined_text)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wordcloud, interpolation='bilinear')
-    ax.axis("off")
-    ax.set_title("Word Cloud of Feedback") # Add a title for clarity
-    st.pyplot(fig)
-    plt.close(fig) # Close the figure to prevent memory issues and display artifacts on rerun
-
 
 # 📊 Feedback Analyzer App
 st.set_page_config("Feedback Analyzer", layout="wide")
@@ -216,12 +161,10 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
             # Initialize with empty lists to avoid errors if no meaningful responses
             sentiments = []
             kws = []
-            ngrams_list = []
 
             if meaningful_responses:
                 sentiments = classify_sentiments(meaningful_responses)
                 kws = extract_keywords_tfidf(meaningful_responses)
-                ngrams_list = extract_ngrams(meaningful_responses, n=2) # Default to bigrams
 
             st.markdown(f"---")
             with st.expander(f"🔍 Analysis: **{col}**", expanded=True):
@@ -233,10 +176,10 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                     keywords_on = st.checkbox("🔤 Top Keywords (List)", value=True, key=f"kw_toggle_{col}_{i}")
                 with col_c2:
                     frequent_on = st.checkbox("📋 Frequent Responses", value=True, key=f"freq_toggle_{col}_{i}")
-                    ngrams_on = st.checkbox("🧩 Top N-Grams (Phrases)", value=True, key=f"ngram_toggle_{col}_{i}")
                 with col_c3:
                     gemini_on = st.checkbox("🧠 Gemini Summary", value=True, key=f"gem_sum_toggle_{col}_{i}")
-                    word_cloud_on = st.checkbox("☁️ Word Cloud", value=True, key=f"wc_toggle_{col}_{i}") # Changed default to True
+                    word_cloud_on = st.checkbox("☁️ Word Cloud", value=False, key=f"wc_toggle_{col}_{i}")
+
 
                 st.markdown("---") # Separator after toggles
 
@@ -275,17 +218,9 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                             st.info("No meaningful responses to find frequent patterns.")
 
                 with col2:
-                    if ngrams_on:
-                        st.markdown("### 🧩 Top N-Grams (Common Phrases)")
-                        if ngrams_list: # Check if ngrams_list is not empty
-                            ngram_strings = [f"- **'{phrase}'** (Count: {count})" for phrase, count in ngrams_list]
-                            st.markdown("\n".join(ngram_strings))
-                        else:
-                            st.info("No significant N-Grams (common phrases) found for this question.")
-
                     if word_cloud_on:
                         st.markdown("### ☁️ Word Cloud")
-                        generate_and_display_wordcloud(meaningful_responses) # Call the word cloud function here
+                        st.info("Word Cloud feature is planned. You can integrate libraries like `wordcloud` and `matplotlib` to display it here.")
 
                     if gemini_on:
                         st.markdown("### 🧠 Gemini Summary")
@@ -312,7 +247,6 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                 "👎 Negative": sentiments.count("Negative"),
                 "😐 Neutral": sentiments.count("Neutral"),
                 "Top Keywords": ", ".join([kw for kw, _ in kws]) if kws else "N/A",
-                "Top N-Grams": ", ".join([ng for ng, _ in ngrams_list]) if ngrams_list else "N/A"
             })
 
         # ---
