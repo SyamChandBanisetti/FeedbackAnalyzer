@@ -1,4 +1,8 @@
 streamlit
 pandas
+matplotlib
+plotly
 scikit-learn
 google-generativeai
+tabulate
+openpyxl  # for reading Excel files
