@@ -6,4 +6,4 @@ scikit-learn
 google-generativeai
 tabulate
 openpyxl  # for reading Excel files
-
+nltk
