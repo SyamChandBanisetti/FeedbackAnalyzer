@@ -10,6 +10,10 @@ from collections import Counter
 import google.generativeai as genai
 import os
 
+# --- For Word Cloud ---
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+
 # --- NLTK Replacement: Simple Tokenization and Stop Words ---
 
 # A basic list of English stop words. This is not as comprehensive as NLTK's,
@@ -108,6 +112,15 @@ def extract_keywords_tfidf(texts, top_n=10):
         st.error(f"An unexpected error occurred during keyword extraction: {e}")
         return []
 
+# ☁️ Word Cloud Generation
+@st.cache_data
+def generate_wordcloud(text_corpus):
+    if not text_corpus.strip():
+        return None
+    wordcloud = WordCloud(width=800, height=400, background_color='white',
+                          stopwords=STOP_WORDS, min_font_size=10).generate(text_corpus)
+    return wordcloud
+
 # 📊 Feedback Analyzer App
 st.set_page_config("Feedback Analyzer", layout="wide")
 st.title("📋 Feedback Analyzer using Gemini Flash 2.0")
@@ -178,7 +191,7 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                     frequent_on = st.checkbox("📋 Frequent Responses", value=True, key=f"freq_toggle_{col}_{i}")
                 with col_c3:
                     gemini_on = st.checkbox("🧠 Gemini Summary", value=True, key=f"gem_sum_toggle_{col}_{i}")
-                    word_cloud_on = st.checkbox("☁️ Word Cloud", value=False, key=f"wc_toggle_{col}_{i}")
+                    word_cloud_on = st.checkbox("☁️ Word Cloud", value=True, key=f"wc_toggle_{col}_{i}")
 
 
                 st.markdown("---") # Separator after toggles
@@ -220,7 +233,19 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                 with col2:
                     if word_cloud_on:
                         st.markdown("### ☁️ Word Cloud")
-                        st.info("Word Cloud feature is planned. You can integrate libraries like `wordcloud` and `matplotlib` to display it here.")
+                        if meaningful_responses:
+                            text_for_wordcloud = " ".join(meaningful_responses)
+                            wordcloud_img = generate_wordcloud(text_for_wordcloud)
+                            if wordcloud_img:
+                                fig_wc, ax_wc = plt.subplots(figsize=(10, 5))
+                                ax_wc.imshow(wordcloud_img, interpolation='bilinear')
+                                ax_wc.axis('off')
+                                st.pyplot(fig_wc)
+                            else:
+                                st.info("Not enough meaningful words to generate a word cloud for this question.")
+                        else:
+                            st.info("No meaningful responses to generate a word cloud for this question.")
+
 
                     if gemini_on:
                         st.markdown("### 🧠 Gemini Summary")
