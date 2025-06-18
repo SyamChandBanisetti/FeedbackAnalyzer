@@ -10,6 +10,10 @@ from collections import Counter
 import google.generativeai as genai
 import os
 
+# --- New Imports for Word Cloud ---
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+
 # --- NLTK Replacement: Simple Tokenization and Stop Words ---
 
 # A basic list of English stop words. This is not as comprehensive as NLTK's,
@@ -131,6 +135,33 @@ def extract_ngrams(texts, n=2, top_n=10):
     # Convert tuple n-grams to string for display
     return [(" ".join(ngram), count) for ngram, count in ngram_counts.most_common(top_n)]
 
+# Function to generate and display word cloud
+@st.cache_data
+def generate_and_display_wordcloud(texts):
+    # Ensure a minimum amount of text for a meaningful word cloud
+    combined_text = " ".join([t for t in texts if len(t.strip()) > 5])
+    
+    if not combined_text or len(combined_text.split()) < 10: # At least 10 words for a meaningful cloud
+        st.info("Not enough diverse text to generate a meaningful word cloud.")
+        return
+
+    wordcloud = WordCloud(
+        width=800,
+        height=400,
+        background_color="white",
+        stopwords=STOP_WORDS, # Use our custom STOP_WORDS
+        min_font_size=10,
+        max_words=100,
+        collocations=False # To avoid showing phrases from bigrams/trigrams too prominently in single words
+    ).generate(combined_text)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.imshow(wordcloud, interpolation='bilinear')
+    ax.axis("off")
+    ax.set_title("Word Cloud of Feedback") # Add a title for clarity
+    st.pyplot(fig)
+    plt.close(fig) # Close the figure to prevent memory issues and display artifacts on rerun
+
 
 # 📊 Feedback Analyzer App
 st.set_page_config("Feedback Analyzer", layout="wide")
@@ -205,8 +236,7 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                     ngrams_on = st.checkbox("🧩 Top N-Grams (Phrases)", value=True, key=f"ngram_toggle_{col}_{i}")
                 with col_c3:
                     gemini_on = st.checkbox("🧠 Gemini Summary", value=True, key=f"gem_sum_toggle_{col}_{i}")
-                    word_cloud_on = st.checkbox("☁️ Word Cloud (Upcoming)", value=False, key=f"wc_toggle_{col}_{i}")
-
+                    word_cloud_on = st.checkbox("☁️ Word Cloud", value=True, key=f"wc_toggle_{col}_{i}") # Changed default to True
 
                 st.markdown("---") # Separator after toggles
 
@@ -255,7 +285,7 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
 
                     if word_cloud_on:
                         st.markdown("### ☁️ Word Cloud")
-                        st.info("Word Cloud feature is planned. You can integrate libraries like `wordcloud` and `matplotlib` to display it here.")
+                        generate_and_display_wordcloud(meaningful_responses) # Call the word cloud function here
 
                     if gemini_on:
                         st.markdown("### 🧠 Gemini Summary")
