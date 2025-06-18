@@ -1,0 +1,8 @@
+dash==2.14.2 # Using a recent stable Dash version
+pandas==2.2.2
+google-generativeai==0.6.0
+plotly==5.22.0
+wordcloud==1.9.3
+matplotlib==3.9.0
+numpy==1.26.4
+openpyxl==3.1.5
