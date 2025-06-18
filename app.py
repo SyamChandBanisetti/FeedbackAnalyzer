@@ -154,7 +154,7 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
         for i, col in enumerate(selected):
             responses = df[col].astype(str).dropna().tolist()
             # Filter out very short or non-meaningful responses for analysis
-            meaningful_responses = [r for r r in responses if len(r.strip()) > 5 and not r.isnumeric()]
+            meaningful_responses = [r for  r in responses if len(r.strip()) > 5 and not r.isnumeric()]
 
             # Initialize with empty lists to avoid errors if no meaningful responses
             sentiments = []
