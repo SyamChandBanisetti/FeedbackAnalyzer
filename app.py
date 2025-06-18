@@ -8,41 +8,46 @@ import plotly.express as px
 from sklearn.feature_extraction.text import TfidfVectorizer
 from collections import Counter
 import google.generativeai as genai
-from nltk.tokenize import word_tokenize
-from nltk.util import ngrams
-import nltk
+import os
 
-# --- NLTK Data Download and Setup ---
-# Use a placeholder to update download messages dynamically
-download_status_placeholder = st.empty()
+# --- NLTK Replacement: Simple Tokenization and Stop Words ---
 
-try:
-    # Attempt to find the required NLTK data.
-    # If not found, a DownloadError will be raised by find().
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-    download_status_placeholder.success("NLTK data (punkt, stopwords) found and ready.")
-except Exception as e: # Catch any exception, including DownloadError or others
-    download_status_placeholder.warning(f"NLTK data not fully found or error during check: {e}. Attempting download...")
-    try:
-        # Download with quiet=True to prevent excessive console output in console
-        # Use an empty st.empty() to clear the message once downloaded.
-        nltk.download('punkt', quiet=True)
-        nltk.download('stopwords', quiet=True)
-        download_status_placeholder.success("NLTK data downloaded successfully and ready!")
-    except Exception as download_error:
-        download_status_placeholder.error(f"Failed to download NLTK data: {download_error}. Please check your internet connection or deployment environment.")
-        st.stop() # Stop the app if crucial NLTK data can't be downloaded
+# A basic list of English stop words. This is not as comprehensive as NLTK's,
+# but it avoids the NLTK dependency and covers most common cases.
+# You can extend this list if you find other words you want to filter.
+STOP_WORDS = set([
+    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours",
+    "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers",
+    "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
+    "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are",
+    "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does",
+    "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until",
+    "while", "of", "at", "by", "for", "with", "about", "against", "between", "into",
+    "through", "during", "before", "after", "above", "below", "to", "from", "up", "down",
+    "in", "out", "on", "off", "over", "under", "again", "further", "then", "once", "here",
+    "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more",
+    "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+    "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now",
+    # Common contractions (might need more if you see them frequently)
+    "don't", "shouldn't", "can't", "won't", "isn't", "aren't", "wasn't", "weren't",
+    # Add punctuation to stop words
+] + list(string.punctuation))
 
-# Initialize stop_words *after* ensuring NLTK stopwords are available
-try:
-    STOP_WORDS = set(nltk.corpus.stopwords.words('english') + list(string.punctuation))
-except LookupError:
-    # This block should ideally not be reached if the above download succeeded
-    st.error("NLTK stopwords data not available even after download attempt. Please restart the app.")
-    st.stop() # Crucial dependency, stop if it fails
+# Simple word tokenizer (replaces nltk.word_tokenize)
+def simple_tokenize(text):
+    # Convert to lower case, remove numbers and punctuation, then split by whitespace
+    cleaned_text = re.sub(r'\d+', '', text.lower()) # Remove numbers
+    cleaned_text = re.sub(rf"[{re.escape(string.punctuation)}]", "", cleaned_text) # Remove punctuation
+    tokens = cleaned_text.split() # Split by whitespace
+    return [token for token in tokens if token.strip()] # Remove empty strings from splitting
 
-# --- End NLTK Data Download and Setup ---
+# Simple n-grams function (replaces nltk.util.ngrams)
+def simple_ngrams(tokens, n):
+    if len(tokens) < n:
+        return []
+    return [tuple(tokens[i:i+n]) for i in range(len(tokens) - n + 1)]
+
+# --- End NLTK Replacement ---
 
 
 # 🔐 Gemini Setup
@@ -90,13 +95,16 @@ def classify_sentiments(texts):
 @st.cache_data
 def extract_keywords_tfidf(texts, top_n=10):
     # Ensure texts are not empty or contain only whitespace after cleaning
-    clean = [re.sub(rf"[{string.punctuation}]", "", t.lower()) for t in texts if len(t.strip()) > 2]
-    clean = [t for t in clean if t and not t.isspace()]
-    if not clean:
+    # Using simple_tokenize to align with the N-gram extraction
+    processed_texts = [" ".join([token for token in simple_tokenize(t) if token not in STOP_WORDS and len(token) > 1]) for t in texts if len(t.strip()) > 2]
+    processed_texts = [t for t in processed_texts if t and not t.isspace()]
+
+    if not processed_texts:
         return [] # Return empty list if no clean text
     try:
-        vec = TfidfVectorizer(stop_words='english', max_features=top_n)
-        X = vec.fit_transform(clean)
+        # TF-IDF can still use its own stop_words if desired, or rely on pre-filtered
+        vec = TfidfVectorizer(max_features=top_n) # Removed stop_words='english' as we pre-filter
+        X = vec.fit_transform(processed_texts)
         kw = vec.get_feature_names_out()
         scores = X.sum(axis=0).A1
         return sorted(zip(kw, scores), key=lambda x: x[1], reverse=True)
@@ -113,15 +121,11 @@ def extract_ngrams(texts, n=2, top_n=10):
     all_ngrams = []
     
     for text in texts:
-        # Clean text: remove numbers, convert to lower, tokenize, filter stop words and short tokens
-        cleaned_text = re.sub(r'\d+', '', text.lower()) # Remove numbers
-        cleaned_text = re.sub(rf"[{string.punctuation}]", "", cleaned_text) # Remove punctuation
-        tokens = word_tokenize(cleaned_text)
-        # Use the globally initialized STOP_WORDS
-        filtered_tokens = [word for word in tokens if word.isalpha() and word not in STOP_WORDS and len(word) > 1] # len > 1 to remove single letters
+        tokens = simple_tokenize(text)
+        filtered_tokens = [word for word in tokens if word not in STOP_WORDS and len(word) > 1]
         
         if len(filtered_tokens) >= n: # Ensure enough tokens to form n-grams
-            all_ngrams.extend(list(ngrams(filtered_tokens, n)))
+            all_ngrams.extend(simple_ngrams(filtered_tokens, n))
 
     ngram_counts = Counter(all_ngrams)
     # Convert tuple n-grams to string for display
