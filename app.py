@@ -222,7 +222,7 @@ if uploaded and api_key and gemini: # Proceed only if file uploaded and Gemini i
                         st.markdown("### 🔤 Top Keywords")
                         if kws: # Check if kws is not empty
                             keyword_strings = [f"- **{kw}** (Score: {score:.2f})" for kw, score in kws]
-                           st.markdown("\n".join(keyword_strings))
+                            st.markdown("\n".join(keyword_strings))
                         else:
                             st.info("No significant keywords found for this question.")
 
