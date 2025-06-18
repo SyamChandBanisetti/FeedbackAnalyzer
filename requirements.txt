@@ -1,10 +1,4 @@
-streamlit==1.36.0
-pandas==2.2.2
-google-generativeai==0.6.0
-plotly==5.22.0
-wordcloud==1.9.3
-matplotlib==3.9.0
-numpy==1.26.4
-openpyxl==3.1.5
-agno==1.1.6 # Or the latest compatible version of Agno
-openai==1.35.1 # Or the latest compatible version
+streamlit
+pandas
+scikit-learn
+google-generativeai
