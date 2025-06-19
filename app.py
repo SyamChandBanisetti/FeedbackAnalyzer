@@ -31,15 +31,17 @@ STOP_WORDS = set([
     "don", "should", "now", "ve", "ll", "m", "re", "d", "again", "further", "then",
     "once", "here", "there", "when", "where", "why", "how", "all", "any", "both",
     "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
-    "own", "same", "so", "than", "too", "very", "great", "good", "bad", "poor", "issue", "problem", "really", "very", "much",
-    "like", "get", "got", "would", "could", "said", "say", "also", "well", "from", "into",
+    "own", "same", "so", "than", "too", "very", "great", "good", "excellent", "best", "satisfied", "love", "like", "positive",
+    "bad", "poor", "terrible", "issue", "problem", "frustrated", "difficult", "unhappy", "negative",
+    "really", "very", "much", "like", "get", "got", "would", "could", "said", "say", "also", "well", "from", "into",
     "through", "during", "before", "after", "above", "below", "up", "down", "out", "off",
     "over", "under", "again", "further", "then", "once", "here", "there", "when",
     "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other",
     "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very",
     "just", "don", "should", "now", "d", "ll", "m", "o", "re", "ve", "y", "ain", "aren",
     "couldn", "didn", "doesn", "hadn", "hasn", "haven", "isn", "ma", "mightn", "mustn",
-    "needn", "shan", "shouldn", "wasn", "weren", "won", "wouldn", "etc"
+    "needn", "shan", "shouldn", "wasn", "weren", "won", "wouldn", "etc", "customer", "service", # Added common feedback-specific stop words
+    "experience", "time", "product", "team", "help", "staff", "called", "email", "phone", "back", "manager"
 ])
 
 EMOTION_KEYWORDS = {
@@ -73,10 +75,9 @@ if not gemini_api_key:
 else:
     # Initialize Gemini model if API key is available
     try:
-        # Changed model_name to gemini-1.5-flash
         genai.configure(api_key=gemini_api_key)
         st.session_state['gemini_model'] = genai.GenerativeModel(
-            model_name="gemini-2.0-flash", # Updated model name here
+            model_name="gemini-2.0-flash", # Updated model name to gemini-1.5-flash
             safety_settings={
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -146,21 +147,30 @@ def get_top_n_grams(text_series, n=1, top_n=10):
         token_pattern=r'\b[a-zA-Z]{2,}\b' # Only words, min 2 chars
     )
     try:
+        # Debugging: Print filtered text if needed
+        # st.write(f"N-gram analysis input (first 100 chars): {text_series.astype(str).fillna('').str.cat(sep=' ')[:100]}...")
         tfidf_matrix = vectorizer.fit_transform(text_series.astype(str).fillna(""))
         feature_names = vectorizer.get_feature_names_out()
+        
+        # If no features found, return empty DataFrame
+        if not feature_names.tolist():
+            return pd.DataFrame(columns=['term', 'tfidf'])
+
         sums = tfidf_matrix.sum(axis=0)
         data = []
         for col, term in enumerate(feature_names):
             data.append((term, sums[0, col]))
         ranking = pd.DataFrame(data, columns=['term', 'tfidf']).sort_values(by='tfidf', ascending=False)
         return ranking.head(top_n)
-    except ValueError:
+    except ValueError as e:
+        # This can happen if text_series is empty or all words are stop words
+        # st.warning(f"Warning: Could not generate N-grams (n={n}). Error: {e}. This usually means no relevant words were found.")
         return pd.DataFrame(columns=['term', 'tfidf'])
 
 @st.cache_data
 def analyze_response_length(text_series):
     """Calculates word count for each response."""
-    return text_series.astype(str).fillna("").apply(lambda x: len(x.split()))
+    return text_series.astype(str).fillna("").apply(lambda x: len(str(x).split()))
 
 @st.cache_data
 def detect_emotions(text_series):
@@ -212,35 +222,64 @@ def generate_wordcloud(text_data):
     """Generates a word cloud image."""
     if not text_data:
         return None
+    
     # Ensure text is string and handle potential non-string elements
-    text_data_str = " ".join([str(item) for item in text_data if pd.notna(item)])
+    # And filter out empty strings from the list before joining
+    text_data_str = " ".join([str(item) for item in text_data if pd.notna(item) and str(item).strip() != ""])
     text_data_str = text_data_str.strip() # Remove leading/trailing whitespace
 
-    # Explicit check for empty string after cleaning
+    # Debugging: Print the string that goes into WordCloud
+    # st.write(f"Text for WordCloud (first 200 chars): '{text_data_str[:200]}'")
+    # st.write(f"Text for WordCloud length: {len(text_data_str)}")
+
+    # Explicit check for empty string after cleaning before passing to WordCloud
     if not text_data_str:
         return None # No words to generate word cloud from
 
-    wordcloud = WordCloud(width=800, height=400, background_color='white',
-                          stopwords=STOP_WORDS, min_font_size=10).generate(text_data_str)
-    
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.imshow(wordcloud, interpolation='bilinear')
-    ax.axis("off")
-    return fig
+    try:
+        # Initialize WordCloud
+        wordcloud_gen = WordCloud(width=800, height=400, background_color='white',
+                                  stopwords=STOP_WORDS, min_font_size=10)
+        
+        # Generate from text
+        wordcloud = wordcloud_gen.generate(text_data_str)
+        
+        # Check if the generated wordcloud actually contains any words (frequencies)
+        if not wordcloud.words_:
+            # This means after stopword removal and other internal filters, no words were left.
+            return None
+
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.imshow(wordcloud, interpolation='bilinear')
+        ax.axis("off")
+        return fig
+    except ValueError as e:
+        # Catch the specific ValueError from wordcloud if it happens again internally
+        # st.warning(f"Error generating word cloud: {e}. This usually means no relevant words were found after filtering.")
+        return None
+    except Exception as e:
+        # Catch any other unexpected errors during word cloud generation
+        # st.error(f"An unexpected error occurred during word cloud generation: {e}")
+        return None
+
 
 @st.cache_data
 def generate_co_occurrence_graph(text_series, min_cooccurrence=2):
     """Generates a word co-occurrence graph."""
     sentences = text_series.astype(str).fillna("").apply(lambda x: x.lower().split())
+    # Filter out stop words and single-character words from sentences
     filtered_sentences = [[word for word in sentence if word not in STOP_WORDS and len(word) > 1] for sentence in sentences]
 
     co_occurrence_matrix = {}
     for sentence in filtered_sentences:
+        # Ensure sentence has at least two words for co-occurrence
+        if len(sentence) < 2:
+            continue
         for i, word1 in enumerate(sentence):
             if word1 not in co_occurrence_matrix:
                 co_occurrence_matrix[word1] = {}
             for j, word2 in enumerate(sentence):
-                if i != j:
+                if i != j: # Don't count a word co-occurring with itself
                     if word2 not in co_occurrence_matrix[word1]:
                         co_occurrence_matrix[word1][word2] = 0
                     co_occurrence_matrix[word1][word2] += 1
@@ -252,7 +291,7 @@ def generate_co_occurrence_graph(text_series, min_cooccurrence=2):
                 G.add_edge(word1, word2, weight=count)
 
     if not G.edges():
-        return None, "No strong co-occurrences found with current settings."
+        return None, "No strong co-occurrences found with current settings. Try lowering the 'Minimum co-occurrence' threshold or check your data for meaningful multi-word phrases."
 
     pos = nx.spring_layout(G, k=0.15, iterations=20, seed=42)
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -274,12 +313,19 @@ def get_gemini_summary(text_to_summarize, model):
     if not model:
         return "Gemini AI is not available. Please provide a valid API key."
 
+    # Gemini has token limits. For very large texts, truncate or use batching.
+    # A common context window for Gemini 1.5 Flash is 1 million tokens.
+    # However, Streamlit's caching might hold the full text. Be mindful if text is extremely long.
+    # For a simple truncation:
+    MAX_GEMINI_INPUT_LENGTH = 10000 # Adjust based on expected text size and Gemini's actual limits
+    if len(text_to_summarize) > MAX_GEMINI_INPUT_LENGTH:
+        st.warning(f"Truncating text for Gemini summary from {len(text_to_summarize)} to {MAX_GEMINI_INPUT_LENGTH} characters to avoid potential token limits.")
+        text_to_summarize = text_to_summarize[:MAX_GEMINI_INPUT_LENGTH] + "\n\n... (text truncated for summarization)"
+
     try:
         # Gemini often prefers list of strings for content, even for single requests
         response = model.generate_content([f"Summarize the following feedback comments concisely, highlight key themes, and identify actionable insights:\n\n{text_to_summarize}"])
         if response.candidates:
-            # st.write("Gemini Raw Response:", response) # Debugging line
-            # st.write("Gemini Prompt Feedback:", response.prompt_feedback) # Debugging line
             return response.text
         else:
             block_reason = "Unknown reason"
@@ -327,57 +373,57 @@ def create_html_report(df, selected_text_columns, analyses_results, analysis_sel
                 <p>Selected text columns for analysis: {', '.join(selected_text_columns)}</p>
             </div>
 
-            {" " if analysis_selections.get('sentiment_analysis') else ""}
+            {" " if analysis_selections.get('sentiment_analysis') else "<div class='section'><p>Sentiment analysis was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>2. Sentiment Analysis</h2>
-                {analyses_results.get('sentiment_analysis', '<p>Sentiment analysis was not selected or no data.</p>')}
+                {analyses_results.get('sentiment_analysis', '<p>Sentiment analysis was not performed or no data.</p>')}
             </div>
 
-            {" " if analysis_selections.get('key_phrase_analysis') else ""}
+            {" " if analysis_selections.get('key_phrase_analysis') else "<div class='section'><p>Key Phrase Analysis was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>3. Key Phrase Analysis</h2>
                 <h3>Top Keywords (Unigrams)</h3>
-                {analyses_results.get('top_keywords_html', '<p>Key phrase analysis was not selected or no data.</p>')}
+                {analyses_results.get('top_keywords_html', '<p>Key phrase analysis was not performed or no data.</p>')}
                 <h3>Top Phrases (Bigrams)</h3>
                 {analyses_results.get('top_bigrams_html', '')}
                 <h3>Top Phrases (Trigrams)</h3>
                 {analyses_results.get('top_trigrams_html', '')}
             </div>
 
-            {" " if analysis_selections.get('response_length_analysis') else ""}
+            {" " if analysis_selections.get('response_length_analysis') else "<div class='section'><p>Response Length Analysis was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>4. Response Length Analysis</h2>
-                {analyses_results.get('response_length_summary', '<p>Response length analysis was not selected or no data.</p>')}
+                {analyses_results.get('response_length_summary', '<p>Response length analysis was not performed or no data.</p>')}
             </div>
 
-            {" " if analysis_selections.get('emotion_detection') else ""}
+            {" " if analysis_selections.get('emotion_detection') else "<div class='section'><p>Emotion Detection was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>5. Emotion Detection</h2>
-                {analyses_results.get('emotion_analysis_summary', '<p>Emotion detection was not selected or no data.</p>')}
+                {analyses_results.get('emotion_analysis_summary', '<p>Emotion detection was not performed or no data.</p>')}
             </div>
 
-            {" " if analysis_selections.get('ces_approximation') else ""}
+            {" " if analysis_selections.get('ces_approximation') else "<div class='section'><p>Customer Effort Score (CES) Approximation was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>6. Customer Effort Score (CES) Approximation</h2>
-                {analyses_results.get('ces_analysis_summary', '<p>CES approximation was not selected or no data.</p>')}
+                {analyses_results.get('ces_analysis_summary', '<p>CES approximation was not performed or no data.</p>')}
             </div>
             
-            {" " if analysis_selections.get('word_cloud') else ""}
+            {" " if analysis_selections.get('word_cloud') else "<div class='section'><p>Word Cloud was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>7. Word Cloud</h2>
-                {analyses_results.get('wordcloud_image', '<p>Word cloud generation was not selected or no data.</p>')}
+                {analyses_results.get('wordcloud_image', '<p>Word cloud generation was not performed or no data.</p>')}
             </div>
 
-            {" " if analysis_selections.get('co_occurrence_network') else ""}
+            {" " if analysis_selections.get('co_occurrence_network') else "<div class='section'><p>Word Co-occurrence Network was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>8. Word Co-occurrence Network</h2>
-                {analyses_results.get('co_occurrence_graph', '<p>Co-occurrence network generation was not selected or no data.</p>')}
+                {analyses_results.get('co_occurrence_graph', '<p>Co-occurrence network generation was not performed or no data.</p>')}
             </div>
 
-            {" " if analysis_selections.get('gemini_summarization') else ""}
+            {" " if analysis_selections.get('gemini_summarization') else "<div class='section'><p>Gemini AI Summarization was not selected for this report.</p></div>"}
             <div class="section">
                 <h2>9. Gemini AI Summaries</h2>
-                {analyses_results.get('gemini_summary_overall', '<p>Gemini AI summarization was not selected or no summary generated.</p>')}
+                {analyses_results.get('gemini_summary_overall', '<p>Gemini AI summarization was not performed or no summary generated.</p>')}
                 {analyses_results.get('gemini_summary_questions', '')}
             </div>
         </div>
@@ -479,7 +525,7 @@ if uploaded_file:
                 overall_sentiments = pd.concat([sentiment_df[col] for col in sentiment_df.columns])
                 sentiment_counts = overall_sentiments.value_counts(normalize=True) * 100
                 
-                if not sentiment_counts.empty:
+                if not sentiment_counts.empty and sentiment_counts.sum() > 0: # Check for non-empty and non-zero sum
                     fig_sentiment = px.pie(
                         values=sentiment_counts.values,
                         names=sentiment_counts.index,
@@ -492,7 +538,7 @@ if uploaded_file:
                     st.write("Sentiment Breakdown:")
                     st.dataframe(sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}), use_container_width=True, key="overall_sentiment_df")
                 else:
-                    st.info("Not enough data to perform sentiment analysis.")
+                    st.info("Not enough data to perform sentiment analysis or all sentiments are neutral/unclassifiable with current keywords.")
 
         # --- Key Phrase Analysis ---
         if st.session_state.analyze_key_phrase_analysis:
@@ -502,22 +548,34 @@ if uploaded_file:
             with col1:
                 st.markdown("### Top Keywords (Unigrams)")
                 top_keywords = get_top_n_grams(combined_feedback_series, n=1, top_n=15)
-                st.dataframe(top_keywords, use_container_width=True, key="top_keywords_df")
+                if not top_keywords.empty:
+                    st.dataframe(top_keywords, use_container_width=True, key="top_keywords_df")
+                else:
+                    st.info("No unigrams found or all are stop words.")
 
             with col2:
                 st.markdown("### Top Phrases (Bigrams)")
                 top_bigrams = get_top_n_grams(combined_feedback_series, n=2, top_n=10)
-                st.dataframe(top_bigrams, use_container_width=True, key="top_bigrams_df")
+                if not top_bigrams.empty:
+                    st.dataframe(top_bigrams, use_container_width=True, key="top_bigrams_df")
+                else:
+                    st.info("No bigrams found or all are stop words.")
 
             with col3:
                 st.markdown("### Top Phrases (Trigrams)")
                 top_trigrams = get_top_n_grams(combined_feedback_series, n=3, top_n=5)
-                st.dataframe(top_trigrams, use_container_width=True, key="top_trigrams_df")
+                if not top_trigrams.empty:
+                    st.dataframe(top_trigrams, use_container_width=True, key="top_trigrams_df")
+                else:
+                    st.info("No trigrams found or all are stop words.")
 
         # --- Response Length Analysis (Direct Representation) ---
         if st.session_state.analyze_response_length_analysis:
             st.subheader("Response Length Analysis")
             response_lengths = analyze_response_length(combined_feedback_series)
+            # Filter out responses that are effectively empty after splitting (e.g., just spaces)
+            response_lengths = response_lengths[response_lengths > 0] 
+
             if not response_lengths.empty:
                 st.write(f"**Average response length:** {response_lengths.mean():.2f} words")
                 st.write(f"**Median response length:** {response_lengths.median():.0f} words")
@@ -527,7 +585,7 @@ if uploaded_file:
                 st.markdown("##### Response Length Summary Statistics")
                 st.dataframe(response_lengths.describe().to_frame().T, use_container_width=True, key="response_length_summary_df")
             else:
-                st.info("Not enough data to analyze response lengths.")
+                st.info("Not enough data to analyze response lengths (responses might be empty).")
 
 
         # --- Emotion Detection (Direct Representation) ---
@@ -537,10 +595,15 @@ if uploaded_file:
                 emotion_percentages = detect_emotions(combined_feedback_series)
                 emotion_df = pd.DataFrame(emotion_percentages.items(), columns=['Emotion', 'Percentage']).sort_values(by='Percentage', ascending=False)
                 
+                # Filter out emotions with 0% before displaying, unless all are 0
                 if not emotion_df.empty and emotion_df['Percentage'].sum() > 0:
-                    st.write("Percentage of responses expressing each emotion:")
-                    st.dataframe(emotion_df, use_container_width=True, key="emotion_df")
-                    st.info("Note: A response can express multiple emotions if it contains keywords from different categories.")
+                    emotion_df = emotion_df[emotion_df['Percentage'] > 0] # Only show emotions with some percentage
+                    if not emotion_df.empty: # Check again after filtering
+                        st.write("Percentage of responses expressing each emotion:")
+                        st.dataframe(emotion_df, use_container_width=True, key="emotion_df")
+                        st.info("Note: A response can express multiple emotions if it contains keywords from different categories.")
+                    else:
+                        st.info("No specific emotion keywords detected in the feedback after filtering for non-zero percentages.")
                 else:
                     st.info("No specific emotion keywords detected in the feedback.")
 
@@ -563,12 +626,12 @@ if uploaded_file:
         if st.session_state.analyze_word_cloud:
             st.subheader("Word Cloud")
             with st.spinner("Generating word cloud..."):
-                text_for_wordcloud = " ".join(combined_feedback_series.dropna().tolist())
+                text_for_wordcloud = combined_feedback_series.dropna().tolist() # Pass as list to generate_wordcloud
                 wordcloud_fig = generate_wordcloud(text_for_wordcloud)
                 if wordcloud_fig: # Only call st.pyplot if a figure was actually generated
                     st.pyplot(wordcloud_fig, key="wordcloud_plot")
                 else:
-                    st.info("Not enough relevant text to generate a word cloud.")
+                    st.info("Not enough relevant text to generate a word cloud (e.g., text might be empty or only contain stop words after processing).")
 
         # --- Word Co-occurrence Network ---
         if st.session_state.analyze_co_occurrence_network:
@@ -629,18 +692,25 @@ if uploaded_file:
                 }
 
                 # 1. Sentiment Analysis
-                # Check the checkbox state AND if the data for this section was actually processed
-                if analysis_selections['sentiment_analysis'] and 'sentiment_counts' in locals() and not sentiment_counts.empty:
-                    sentiment_counts_html = sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}).to_html()
-                    fig_sentiment_report = px.pie(values=sentiment_counts.values, names=sentiment_counts.index, title="Overall Sentiment Distribution", hole=0.4)
-                    fig_sentiment_report.update_traces(textposition='inside', textinfo='percent+label')
-                    analyses_for_report['sentiment_analysis'] = f"<h3>Overall Sentiment Distribution</h3>{fig_to_base64(fig_sentiment_report)}<p>Sentiment Breakdown:</p>{sentiment_counts_html}"
+                if analysis_selections['sentiment_analysis']:
+                    sentiment_df_report = pd.DataFrame()
+                    for col in selected_text_columns:
+                        sentiment_df_report[f'{col}_Sentiment'] = analyze_sentiment(df[col])
+                    overall_sentiments_report = pd.concat([sentiment_df_report[col] for col in sentiment_df_report.columns])
+                    sentiment_counts_report = overall_sentiments_report.value_counts(normalize=True) * 100
+                    
+                    if not sentiment_counts_report.empty and sentiment_counts_report.sum() > 0:
+                        sentiment_counts_html = sentiment_counts_report.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}).to_html()
+                        fig_sentiment_report = px.pie(values=sentiment_counts_report.values, names=sentiment_counts_report.index, title="Overall Sentiment Distribution", hole=0.4)
+                        fig_sentiment_report.update_traces(textposition='inside', textinfo='percent+label')
+                        analyses_for_report['sentiment_analysis'] = f"<h3>Overall Sentiment Distribution</h3>{fig_to_base64(fig_sentiment_report)}<p>Sentiment Breakdown:</p>{sentiment_counts_html}"
+                    else:
+                        analyses_for_report['sentiment_analysis'] = '<p>Sentiment analysis was performed but no significant sentiment data was found (might be all neutral or empty).</p>'
                 else:
-                    analyses_for_report['sentiment_analysis'] = '<p>Sentiment analysis was not selected or no data.</p>'
+                    analyses_for_report['sentiment_analysis'] = '<p>Sentiment analysis was not selected for this report.</p>'
 
                 # 2. Key Phrase Analysis
                 if analysis_selections['key_phrase_analysis']:
-                    # Re-run or ensure these are available for the report if the checkbox was true
                     top_keywords_report = get_top_n_grams(combined_feedback_series, n=1, top_n=15)
                     top_bigrams_report = get_top_n_grams(combined_feedback_series, n=2, top_n=10)
                     top_trigrams_report = get_top_n_grams(combined_feedback_series, n=3, top_n=5)
@@ -649,13 +719,14 @@ if uploaded_file:
                     analyses_for_report['top_bigrams_html'] = top_bigrams_report.to_html() if not top_bigrams_report.empty else '<p>No top bigrams data.</p>'
                     analyses_for_report['top_trigrams_html'] = top_trigrams_report.to_html() if not top_trigrams_report.empty else '<p>No top trigrams data.</p>'
                 else:
-                    analyses_for_report['top_keywords_html'] = '<p>Key phrase analysis was not selected.</p>'
+                    analyses_for_report['top_keywords_html'] = '<p>Key phrase analysis was not selected for this report.</p>'
                     analyses_for_report['top_bigrams_html'] = ''
                     analyses_for_report['top_trigrams_html'] = ''
 
                 # 3. Response Length (Report version)
                 if analysis_selections['response_length_analysis']:
                     response_lengths_report = analyze_response_length(combined_feedback_series)
+                    response_lengths_report = response_lengths_report[response_lengths_report > 0]
                     if not response_lengths_report.empty:
                         length_stats_html = response_lengths_report.describe().to_frame().T.to_html()
                         analyses_for_report['response_length_summary'] = f"<h3>Response Length Analysis</h3>" \
@@ -667,21 +738,25 @@ if uploaded_file:
                     else:
                         analyses_for_report['response_length_summary'] = '<p>No response length data.</p>'
                 else:
-                    analyses_for_report['response_length_summary'] = '<p>Response length analysis was not selected.</p>'
+                    analyses_for_report['response_length_summary'] = '<p>Response length analysis was not selected for this report.</p>'
 
                 # 4. Emotion Detection (Report version)
                 if analysis_selections['emotion_detection']:
                     emotion_percentages_report = detect_emotions(combined_feedback_series)
                     emotion_df_report = pd.DataFrame(emotion_percentages_report.items(), columns=['Emotion', 'Percentage']).sort_values(by='Percentage', ascending=False)
                     if not emotion_df_report.empty and emotion_df_report['Percentage'].sum() > 0:
-                        analyses_for_report['emotion_analysis_summary'] = f"<h3>Emotion Detection (Keyword-Based)</h3>" \
-                                                                           f"<h4>Percentage of responses expressing each emotion:</h4>" \
-                                                                           f"{emotion_df_report.to_html()}" \
-                                                                           f"<p><i>Note: A response can express multiple emotions if it contains keywords from different categories.</i></p>"
+                        emotion_df_report = emotion_df_report[emotion_df_report['Percentage'] > 0]
+                        if not emotion_df_report.empty:
+                            analyses_for_report['emotion_analysis_summary'] = f"<h3>Emotion Detection (Keyword-Based)</h3>" \
+                                                                               f"<h4>Percentage of responses expressing each emotion:</h4>" \
+                                                                               f"{emotion_df_report.to_html()}" \
+                                                                               f"<p><i>Note: A response can express multiple emotions if it contains keywords from different categories.</i></p>"
+                        else:
+                             analyses_for_report['emotion_analysis_summary'] = '<p>No specific emotion keywords detected in the feedback after filtering for non-zero percentages.</p>'
                     else:
                         analyses_for_report['emotion_analysis_summary'] = '<p>No emotion analysis data.</p>'
                 else:
-                    analyses_for_report['emotion_analysis_summary'] = '<p>Emotion detection was not selected.</p>'
+                    analyses_for_report['emotion_analysis_summary'] = '<p>Emotion detection was not selected for this report.</p>'
 
                 # 5. CES Approximation (Report version)
                 if analysis_selections['ces_approximation']:
@@ -695,18 +770,18 @@ if uploaded_file:
                     else:
                         analyses_for_report['ces_analysis_summary'] = '<p>No CES analysis data.</p>'
                 else:
-                    analyses_for_report['ces_analysis_summary'] = '<p>CES approximation was not selected.</p>'
+                    analyses_for_report['ces_analysis_summary'] = '<p>CES approximation was not selected for this report.</p>'
 
                 # 6. Word Cloud
                 if analysis_selections['word_cloud']:
-                    text_for_wordcloud_report = " ".join(combined_feedback_series.dropna().tolist())
+                    text_for_wordcloud_report = combined_feedback_series.dropna().tolist()
                     wordcloud_fig_report = generate_wordcloud(text_for_wordcloud_report)
                     if wordcloud_fig_report:
                         analyses_for_report['wordcloud_image'] = fig_to_base64(wordcloud_fig_report)
                     else:
-                        analyses_for_report['wordcloud_image'] = '<p>No word cloud generated.</p>'
+                        analyses_for_report['wordcloud_image'] = '<p>No word cloud generated (text might be empty or only contain stop words).</p>'
                 else:
-                    analyses_for_report['wordcloud_image'] = '<p>Word cloud generation was not selected.</p>'
+                    analyses_for_report['wordcloud_image'] = '<p>Word cloud generation was not selected for this report.</p>'
 
                 # 7. Co-occurrence Graph
                 if analysis_selections['co_occurrence_network']:
@@ -716,7 +791,7 @@ if uploaded_file:
                     else:
                         analyses_for_report['co_occurrence_graph'] = f'<p>{co_occurrence_message_report if co_occurrence_message_report else "No co-occurrence graph generated."}</p>'
                 else:
-                    analyses_for_report['co_occurrence_graph'] = '<p>Co-occurrence network generation was not selected.</p>'
+                    analyses_for_report['co_occurrence_graph'] = '<p>Co-occurrence network generation was not selected for this report.</p>'
 
                 # 8. Gemini AI Summaries for Report
                 overall_summary_report_html = ""
@@ -732,7 +807,7 @@ if uploaded_file:
                 analyses_for_report['gemini_summary_overall'] = overall_summary_report_html if overall_summary_report_html else '<p>No overall Gemini summary generated for report.</p>'
                 analyses_for_report['gemini_summary_questions'] = question_summaries_report_html if question_summaries_report_html else '<p>No per-question Gemini summaries generated for report.</p>'
                 if not analysis_selections['gemini_summarization']:
-                    analyses_for_report['gemini_summary_overall'] = '<p>Gemini AI summarization was not selected.</p>'
+                    analyses_for_report['gemini_summary_overall'] = '<p>Gemini AI summarization was not selected for this report.</p>'
                     analyses_for_report['gemini_summary_questions'] = ''
 
 
