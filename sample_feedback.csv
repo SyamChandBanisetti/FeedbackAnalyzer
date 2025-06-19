@@ -1,4 +1,11 @@
-Name,Email,How was the course?,What can be improved?,Suggestions
-John,john@example.com,Great!,More coding projects,Add live sessions
-Jane,jane@example.com,Too rushed,Too fast,Need more examples
-Alex,alex@example.com,Excellent,Nothing,Keep it up
+ID,Feedback_Comments,Question_2
+1,"The service was great and very easy to use.",Everything was smooth.
+2,"I had a difficult time reaching support, very frustrating.",It was hard to get help.
+3,"Neutral feedback, nothing special.",It's okay.
+4,"Super happy with the quick resolution, love it!",Very satisfied.
+5,"Annoyed by the complex process, took too much effort.",Complicated setup.
+6,"Excellent experience, seamless process.",Highly recommend.
+7,"It was a bit challenging to navigate the interface.",Could be simpler.
+8,"Satisfied overall, but shipping was slow.",Good but slow.
+9,"No feedback provided.",
+10,"Feeling excited about the new features.",Looking forward to it.
