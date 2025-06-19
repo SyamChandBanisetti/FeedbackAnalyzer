@@ -14,7 +14,11 @@ import os
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
-STOP_WORDS = set([...])  # Omitted for brevity
+STOP_WORDS = set(map(str, [
+    # ... your stop words
+    "i", "me", "my", "myself", "we", "our", "ours",  # etc.
+] + list(string.punctuation)))
+  # Omitted for brevity
 
 def simple_tokenize(text):
     cleaned_text = re.sub(r'\d+', '', text.lower())
