@@ -123,7 +123,7 @@ def generate_wordcloud(text_corpus):
 
 # 📊 Feedback Analyzer App
 st.set_page_config("Feedback Analyzer", layout="wide")
-st.title("📋 Feedback Analyzer using Gemini Flash 2.0")
+st.title("📋 Feedback Analyzer Tool")
 
 # Sidebar: Gemini API Key
 with st.sidebar:
