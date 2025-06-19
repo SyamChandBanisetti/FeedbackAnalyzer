@@ -9,3 +9,5 @@ openpyxl  # for reading Excel files
 nltk
 wordcloud
 matplotlib
+networkx
+python-dotenv
