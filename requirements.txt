@@ -11,3 +11,4 @@ wordcloud
 matplotlib
 networkx
 python-dotenv
+fpdf
