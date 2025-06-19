@@ -1,807 +1,674 @@
 import streamlit as st
 import pandas as pd
-import tempfile
-import csv
-import re
-import string
 import plotly.express as px
-from sklearn.feature_extraction.text import TfidfVectorizer
-from collections import Counter, defaultdict
-import google.generativeai as genai
-import os
 import networkx as nx
 import matplotlib.pyplot as plt
-import base64 # For embedding images in HTML
-from io import BytesIO # For saving plot images to memory
-from wordcloud import WordCloud # Add this line
+from sklearn.feature_extraction.text import TfidfVectorizer
+from wordcloud import WordCloud # Crucial fix for NameError
+import os
+import io
+from datetime import datetime
+import base64
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-# --- NLTK Replacement: Simple Tokenization and Stop Words ---
+# --- Streamlit Page Configuration ---
+st.set_page_config(
+    page_title="Feedback Analyzer Tool",
+    page_icon="📋",
+    layout="wide"
+)
 
+# --- Constants and Configuration ---
 STOP_WORDS = set([
-    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours",
-    "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers",
-    "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
-    "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are",
-    "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does",
-    "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until",
-    "while", "of", "at", "by", "for", "with", "about", "against", "between", "into",
-    "through", "during", "before", "after", "above", "below", "to", "from", "up", "down",
-    "in", "out", "on", "off", "over", "under", "again", "further", "then", "once", "here",
-    "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more",
-    "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
-    "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now",
-    "don't", "shouldn't", "can't", "won't", "isn't", "aren't", "wasn't", "weren't",
-] + list(string.punctuation))
+    "a", "an", "the", "and", "but", "or", "to", "of", "in", "on", "at", "for", "with",
+    "as", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "not", "no", "don't", "can't", "won't", "shouldn't", "wouldn't",
+    "couldn't", "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us",
+    "them", "my", "your", "his", "its", "our", "their", "this", "that", "these", "those",
+    "some", "any", "all", "each", "every", "many", "much", "more", "most", "other",
+    "such", "only", "own", "so", "than", "too", "very", "s", "t", "can", "will", "just",
+    "don", "should", "now", "ve", "ll", "m", "re", "d", "again", "further", "then",
+    "once", "here", "there", "when", "where", "why", "how", "all", "any", "both",
+    "each", "few", "more", "most", "other", "some", "such", "no", "nor", "not", "only",
+    "own", "same", "so", "than", "too", "very", "great", "good", "bad", "poor", "issue", "problem", "really", "very", "much",
+    "like", "get", "got", "would", "could", "said", "say", "also", "well", "from", "into",
+    "through", "during", "before", "after", "above", "below", "up", "down", "out", "off",
+    "over", "under", "again", "further", "then", "once", "here", "there", "when",
+    "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other",
+    "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too",
+    "very", "just", "don", "should", "now", "d", "ll", "m", "o", "re", "ve", "y", "ain", "aren",
+    "couldn", "didn", "doesn", "hadn", "hasn", "haven", "isn", "ma", "mightn", "mustn",
+    "needn", "shan", "shouldn", "wasn", "weren", "won", "wouldn", "etc"
+])
 
-def simple_tokenize(text):
-    cleaned_text = re.sub(r'\d+', '', text.lower())
-    cleaned_text = re.sub(rf"[{re.escape(string.punctuation)}]", "", cleaned_text)
-    tokens = cleaned_text.split()
-    return [token for token in tokens if token.strip()]
+EMOTION_KEYWORDS = {
+    "Joy": ["happy", "delighted", "pleased", "excited", "joyful", "satisfied", "great", "love"],
+    "Sadness": ["sad", "unhappy", "down", "depressed", "disappointed", "frustrated", "grief"],
+    "Anger": ["angry", "mad", "frustrated", "annoyed", "irritated", "furious", "rage"],
+    "Surprise": ["surprised", "shocked", "amazed", "unexpected", "astonished"],
+    "Fear": ["fear", "scared", "anxious", "worried", "nervous", "dread"],
+    "Disgust": ["disgusted", "revolted", "sick", "nauseated", "repulsed"],
+    "Trust": ["trust", "reliable", "confident", "secure", "faithful"],
+    "Anticipation": ["eager", "expecting", "hopeful", "waiting", "looking forward"]
+}
 
-# --- End NLTK Replacement ---
+CES_KEYWORDS = {
+    "Low Effort": ["easy", "simple", "smooth", "seamless", "effortless", "quick", "no hassle", "straightforward"],
+    "High Effort": ["difficult", "hard", "complicated", "frustrating", "time-consuming", "struggle", "challenging", "complex"]
+}
 
+# --- Gemini API Configuration (moved outside functions for caching) ---
+gemini_api_key = None
+try:
+    # First, try to load from Streamlit secrets (for Streamlit Cloud)
+    gemini_api_key = st.secrets["GEMINI_API_KEY"]
+except KeyError:
+    # If not in secrets, try from environment variables (for local deployment with .env)
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
 
-# 🔐 Gemini Setup
-def init_gemini(api_key):
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+if not gemini_api_key:
+    st.sidebar.warning("🔐 Gemini API Key not found. Please enter it below or set it in `.streamlit/secrets.toml` or as an environment variable.")
+    gemini_api_key = st.sidebar.text_input("Enter Gemini API Key", type="password", key="gemini_api_key_input")
+    if gemini_api_key:
+        st.session_state["gemini_api_key"] = gemini_api_key # Store in session state if entered manually
+    else:
+        st.info("Please provide a Gemini API Key to enable AI features.")
 
-# 📁 Load & Clean File
-def preprocess_and_save(file):
+# Initialize Gemini model if API key is available
+if gemini_api_key:
     try:
-        if file.name.endswith('.csv'):
-            df = pd.read_csv(file)
-        elif file.name.endswith('.xlsx'):
-            df = pd.read_excel(file)
-        else:
-            st.error("Unsupported file format. Please upload a CSV or Excel file.")
-            return None, None, None
-
-        df.fillna("", inplace=True)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            tmp_path = tmp.name
-            df.to_csv(tmp_path, index=False, quoting=csv.QUOTE_ALL)
-
-        return tmp_path, df.columns.tolist(), df
+        genai.configure(api_key=gemini_api_key)
+        # Configure the model with adjusted safety settings
+        # BLOCK_NONE for "dangerous_content" is for testing/prototyping.
+        # Use with caution and only if you understand the implications for responsible AI.
+        st.session_state['gemini_model'] = genai.GenerativeModel(
+            model_name="gemini-pro",
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            }
+        )
+        # Simple test prompt to check connectivity and initial blocking
+        try:
+            test_response = st.session_state['gemini_model'].generate_content("Hello, how are you today?")
+            if test_response.candidates:
+                st.sidebar.success("✅ Connected to Gemini API.")
+            else:
+                st.sidebar.error("Gemini API connected but no candidates returned for test prompt.")
+                if test_response.prompt_feedback and test_response.prompt_feedback.block_reason:
+                    st.sidebar.error(f"Test prompt blocked for reason: {test_response.prompt_feedback.block_reason.name}")
+        except Exception as e:
+            st.sidebar.error(f"Error during Gemini test prompt: {e}")
+            st.session_state['gemini_model'] = None # Invalidate model if test fails
     except Exception as e:
-        st.error(f"Error processing file: {e}")
-        return None, None, None
+        st.sidebar.error(f"Error initializing Gemini: '{e}'. Check your API key or network.")
+        st.session_state['gemini_model'] = None # Invalidate model if initialization fails
+else:
+    st.session_state['gemini_model'] = None # No API key, no model
 
-# 🧠 Sentiment Classifier
+# --- Helper Functions ---
+
 @st.cache_data
-def classify_sentiments(texts):
+def load_data(uploaded_file):
+    """Loads data from CSV or Excel."""
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith(('.xls', '.xlsx')):
+            df = pd.read_excel(uploaded_file)
+        else:
+            st.error("Unsupported file type. Please upload a CSV or Excel file.")
+            return None
+        return df
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        return None
+
+@st.cache_data
+def analyze_sentiment(text_series):
+    """Simple keyword-based sentiment analysis."""
+    positive_keywords = ["good", "great", "excellent", "positive", "happy", "love", "satisfied", "recommend", "best", "smooth", "easy"]
+    negative_keywords = ["bad", "poor", "terrible", "negative", "unhappy", "hate", "dissatisfied", "frustrating", "problem", "issue", "difficult"]
+
     sentiments = []
-    for text in texts:
-        t = text.lower()
-        if any(w in t for w in ["good", "great", "excellent", "love", "awesome", "helpful", "satisfied", "nice", "positive", "happy", "smooth", "efficient", "recommend", "super", "perfect", "enjoy", "pleased", "fantastic", "brilliant", "outstanding"]):
+    for text in text_series.astype(str).fillna(""):
+        text_lower = text.lower()
+        if any(keyword in text_lower for keyword in positive_keywords) and not any(keyword in text_lower for keyword in negative_keywords):
             sentiments.append("Positive")
-        elif any(w in t for w in ["bad", "poor", "terrible", "hate", "worst", "boring", "rude", "unsatisfied", "negative", "unhappy", "difficult", "issue", "problem", "frustrating", "slow", "broken", "complaint", "disappointing", "awful", "unacceptable", "bug", "error"]):
+        elif any(keyword in text_lower for keyword in negative_keywords) and not any(keyword in text_lower for keyword in positive_keywords):
             sentiments.append("Negative")
+        elif any(keyword in text_lower for keyword in positive_keywords) and any(keyword in text_lower for keyword in negative_keywords):
+            sentiments.append("Mixed") # Both positive and negative keywords
         else:
             sentiments.append("Neutral")
     return sentiments
 
-# 🔤 TF-IDF Keywords
 @st.cache_data
-def extract_keywords_tfidf(texts, top_n=10):
-    processed_texts = [" ".join([token for token in simple_tokenize(t) if token not in STOP_WORDS and len(token) > 1]) for t in texts if len(t.strip()) > 2]
-    processed_texts = [t for t in processed_texts if t and not t.isspace()]
-
-    if not processed_texts:
-        return []
+def get_top_n_grams(text_series, n=1, top_n=10):
+    """Generates top N-grams (single words, bigrams, trigrams)."""
+    vectorizer = TfidfVectorizer(
+        ngram_range=(n, n),
+        stop_words=list(STOP_WORDS),
+        token_pattern=r'\b[a-zA-Z]{2,}\b' # Only words, min 2 chars
+    )
     try:
-        vec = TfidfVectorizer(max_features=top_n)
-        X = vec.fit_transform(processed_texts)
-        kw = vec.get_feature_names_out()
-        scores = X.sum(axis=0).A1
-        return sorted(zip(kw, scores), key=lambda x: x[1], reverse=True)
-    except ValueError as e:
-        # st.warning(f"Could not extract keywords: {e}. Not enough unique words in the provided texts.")
-        return []
-    except Exception as e:
-        st.error(f"An unexpected error occurred during keyword extraction: {e}")
-        return []
+        tfidf_matrix = vectorizer.fit_transform(text_series.astype(str).fillna(""))
+        feature_names = vectorizer.get_feature_names_out()
+        sums = tfidf_matrix.sum(axis=0)
+        data = []
+        for col, term in enumerate(feature_names):
+            data.append((term, sums[0, col]))
+        ranking = pd.DataFrame(data, columns=['term', 'tfidf']).sort_values(by='tfidf', ascending=False)
+        return ranking.head(top_n)
+    except ValueError:
+        return pd.DataFrame(columns=['term', 'tfidf'])
 
-# 🔗 N-Gram Analysis
 @st.cache_data
-def extract_ngrams(texts, n_range=(2, 2), top_n=10):
-    processed_texts = [" ".join([token for token in simple_tokenize(t) if token not in STOP_WORDS and len(token) > 1]) for t in texts if len(t.strip()) > 2]
-    processed_texts = [t for t in processed_texts if t and not t.isspace()]
+def analyze_response_length(text_series):
+    """Calculates word count for each response."""
+    return text_series.astype(str).fillna("").apply(lambda x: len(x.split()))
 
-    if not processed_texts:
-        return []
-
-    try:
-        vectorizer = TfidfVectorizer(ngram_range=n_range, max_features=top_n)
-        X = vectorizer.fit_transform(processed_texts)
-        ngrams = vectorizer.get_feature_names_out()
-        scores = X.sum(axis=0).A1
-        return sorted(zip(ngrams, scores), key=lambda x: x[1], reverse=True)
-    except ValueError as e:
-        # st.warning(f"Could not extract N-grams (range {n_range}): {e}. Not enough meaningful phrases in the provided texts.")
-        return []
-    except Exception as e:
-        st.error(f"An unexpected error occurred during N-gram extraction: {e}")
-        return []
-
-# 📏 Response Length Analysis
 @st.cache_data
-def analyze_response_length(texts):
-    lengths = [len(simple_tokenize(text)) for text in texts if len(text.strip()) > 2]
-    if not lengths:
-        return pd.DataFrame(), {} # Return empty dict for stats
+def detect_emotions(text_series):
+    """Detects emotions based on keywords."""
+    emotion_counts = {emotion: 0 for emotion in EMOTION_KEYWORDS}
+    total_responses = len(text_series)
+    if total_responses == 0:
+        return {emotion: 0 for emotion in EMOTION_KEYWORDS} # Return zeros if no responses
 
-    length_df = pd.DataFrame(lengths, columns=["Word Count"])
-
-    stats = {
-        "Average Word Count": length_df["Word Count"].mean(),
-        "Median Word Count": length_df["Word Count"].median(),
-        "Min Word Count": length_df["Word Count"].min(),
-        "Max Word Count": length_df["Word Count"].max()
+    for text in text_series.astype(str).fillna(""):
+        text_lower = text.lower()
+        found_emotion_in_response = False
+        for emotion, keywords in EMOTION_KEYWORDS.items():
+            if any(keyword in text_lower for keyword in keywords):
+                emotion_counts[emotion] += 1
+                found_emotion_in_response = True
+        # If no specific emotion keyword found, consider it neutral for emotion analysis
+        if not found_emotion_in_response:
+            # We don't increment a "neutral" counter here, as it's about detecting *specific* emotions.
+            pass
+    
+    # Convert counts to percentages
+    emotion_percentages = {
+        emotion: (count / total_responses) * 100 if total_responses > 0 else 0
+        for emotion, count in emotion_counts.items()
     }
+    return emotion_percentages
 
-    return length_df, stats
 
-# ☁️ Word Cloud Generation
 @st.cache_data
-def generate_wordcloud(text_corpus):
-    if not text_corpus.strip():
+def calculate_ces(text_series):
+    """Approximates Customer Effort Score based on keywords."""
+    effort_scores = []
+    for text in text_series.astype(str).fillna(""):
+        text_lower = text.lower()
+        low_effort_matches = sum(1 for keyword in CES_KEYWORDS["Low Effort"] if keyword in text_lower)
+        high_effort_matches = sum(1 for keyword in CES_KEYWORDS["High Effort"] if keyword in text_lower)
+
+        if low_effort_matches > high_effort_matches:
+            effort_scores.append("Low Effort")
+        elif high_effort_matches > low_effort_matches:
+            effort_scores.append("High Effort")
+        else:
+            effort_scores.append("Neutral/Mixed Effort")
+    return effort_scores
+
+@st.cache_data
+def generate_wordcloud(text_data):
+    """Generates a word cloud image."""
+    if not text_data:
         return None
+    # Ensure text is string and handle potential non-string elements
+    text_data_str = " ".join([str(item) for item in text_data if pd.notna(item)])
+    if not text_data_str.strip():
+        return None
+
     wordcloud = WordCloud(width=800, height=400, background_color='white',
-                            stopwords=STOP_WORDS, min_font_size=10).generate(text_corpus)
-    return wordcloud
+                          stopwords=STOP_WORDS, min_font_size=10).generate(text_data_str)
+    
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.imshow(wordcloud, interpolation='bilinear')
+    ax.axis("off")
+    return fig
 
-# ✨ New: Emotion Detection (Keyword-based Approximation)
 @st.cache_data
-def detect_emotions(texts):
-    emotion_keywords = {
-        "Joy": ["happy", "great", "love", "excellent", "pleased", "delighted", "fantastic", "awesome", "enjoy", "best"],
-        "Sadness": ["sad", "unhappy", "disappointed", "frustrated", "bad", "poor", "terrible", "regret", "pity", "dreadful"],
-        "Anger": ["angry", "frustrating", "issue", "problem", "bug", "slow", "broken", "hate", "worst", "annoyed", "ridiculous", "unacceptable"],
-        "Surprise": ["surprise", "unexpected", "wow", "amazing", "shocked", "suddenly", "unbelievable"],
-        "Fear": ["fear", "anxious", "worried", "concerned", "scared", "risk", "uncertainty"],
-        "Trust": ["trust", "reliable", "dependable", "secure", "safe", "confident"],
-        "Anticipation": ["looking forward", "excited", "eager", "hope", "soon", "future", "expecting"],
-        "Disgust": ["disgust", "gross", "awful", "horrible", "nasty", "sickening"]
-    }
+def generate_co_occurrence_graph(text_series, min_cooccurrence=2):
+    """Generates a word co-occurrence graph."""
+    sentences = text_series.astype(str).fillna("").apply(lambda x: x.lower().split())
+    filtered_sentences = [[word for word in sentence if word not in STOP_WORDS and len(word) > 1] for sentence in sentences]
 
-    emotion_counts = defaultdict(int)
-    total_meaningful_responses = 0
-
-    for text in texts:
-        if len(text.strip()) < 5:
-            continue
-        total_meaningful_responses += 1
-        tokens = simple_tokenize(text)
-        detected_in_response = set()
-
-        for emotion, keywords in emotion_keywords.items():
-            if any(keyword in tokens for keyword in keywords):
-                detected_in_response.add(emotion)
-
-        for emotion in detected_in_response:
-            emotion_counts[emotion] += 1
-
-    if not emotion_counts:
-        return pd.DataFrame() # Return empty DataFrame
-
-    emotion_df = pd.DataFrame(emotion_counts.items(), columns=["Emotion", "Count"])
-    if total_meaningful_responses > 0:
-        emotion_df["Percentage"] = (emotion_df["Count"] / total_meaningful_responses) * 100
-    else:
-        emotion_df["Percentage"] = 0
-
-    emotion_df = emotion_df.sort_values(by="Percentage", ascending=False)
-
-    return emotion_df
-
-
-# ✨ New: Customer Effort Score (CES) Approximation
-@st.cache_data
-def calculate_ces_approximation(texts):
-    high_effort_keywords = ["hard", "difficult", "struggle", "frustrating", "confusing", "complex", "took long", "complicated", "unclear", "trouble", "issue", "problem", "impossible", "couldn't"]
-    low_effort_keywords = ["easy", "simple", "seamless", "quick", "fast", "efficient", "smooth", "effortless", "straightforward", "convenient", "no problem"]
-
-    ces_categories = []
-
-    for text in texts:
-        if len(text.strip()) < 5:
-            continue
-        
-        score = 0
-        found_high = False
-        found_low = False
-
-        # Convert text to lower for keyword matching
-        lower_text = text.lower()
-
-        for keyword in high_effort_keywords:
-            if keyword in lower_text:
-                score -= 1
-                found_high = True
-        for keyword in low_effort_keywords:
-            if keyword in lower_text:
-                score += 1
-                found_low = True
-
-        if found_high and not found_low:
-            ces_categories.append("High Effort")
-        elif found_low and not found_high:
-            ces_categories.append("Low Effort")
-        elif found_high and found_low:
-            if score > 0:
-                ces_categories.append("Mixed (leaning Low)")
-            elif score < 0:
-                ces_categories.append("Mixed (leaning High)")
-            else:
-                ces_categories.append("Neutral Effort")
-        else: # Neither high nor low effort keywords found
-            ces_categories.append("Neutral Effort")
-
-    if not ces_categories:
-        return pd.DataFrame()
-
-    ces_df = pd.DataFrame(ces_categories, columns=["Effort Level"])
-    ces_counts = ces_df["Effort Level"].value_counts().reset_index()
-    ces_counts.columns = ["Effort Level", "Count"]
-
-    return ces_counts
-
-# ✨ New: Word Co-occurrence Network
-@st.cache_data
-def generate_cooccurrence_graph(texts, top_n_nodes=20, edge_threshold=2):
-    processed_texts = [" ".join([token for token in simple_tokenize(t) if token not in STOP_WORDS and len(token) > 1]) for t in texts if t and not t.isspace()]
-
-    if not processed_texts:
-        return None
-
-    co_occurrences = defaultdict(lambda: defaultdict(int))
-    word_counts = defaultdict(int)
-
-    for text in processed_texts:
-        words = list(set(text.split()))
-        for i, word1 in enumerate(words):
-            word_counts[word1] += 1
-            for j, word2 in enumerate(words):
-                if i < j:
-                    co_occurrences[word1][word2] += 1
-                    co_occurrences[word2][word1] += 1
-
-    top_words_overall = sorted(word_counts.items(), key=lambda item: item[1], reverse=True)[:top_n_nodes]
-    top_word_set = {word for word, _ in top_words_overall}
+    co_occurrence_matrix = {}
+    for sentence in filtered_sentences:
+        for i, word1 in enumerate(sentence):
+            if word1 not in co_occurrence_matrix:
+                co_occurrence_matrix[word1] = {}
+            for j, word2 in enumerate(sentence):
+                if i != j:
+                    if word2 not in co_occurrence_matrix[word1]:
+                        co_occurrence_matrix[word1][word2] = 0
+                    co_occurrence_matrix[word1][word2] += 1
 
     G = nx.Graph()
-
-    for word, count in top_words_overall:
-        G.add_node(word, size=count)
-
-    for word1 in top_word_set:
-        for word2 in top_word_set:
-            if word1 != word2 and co_occurrences[word1][word2] >= edge_threshold:
-                G.add_edge(word1, word2, weight=co_occurrences[word1][word2])
+    for word1, connections in co_occurrence_matrix.items():
+        for word2, count in connections.items():
+            if count >= min_cooccurrence:
+                G.add_edge(word1, word2, weight=count)
 
     if not G.edges():
-        return None
+        return None, "No strong co-occurrences found with current settings."
 
-    return G
+    pos = nx.spring_layout(G, k=0.15, iterations=20, seed=42)
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    edge_weights = [G[u][v]['weight'] for u, v in G.edges()]
+    node_sizes = [G.degree(node) * 100 for node in G.nodes()] # Size nodes by their degree
+    
+    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color='lightblue', alpha=0.9, ax=ax)
+    nx.draw_networkx_edges(G, pos, width=[w * 0.5 for w in edge_weights], alpha=0.5, edge_color='gray', ax=ax)
+    nx.draw_networkx_labels(G, pos, font_size=8, font_weight='bold', ax=ax)
+    
+    ax.set_title(f'Word Co-occurrence Network (Min Co-occurrence: {min_cooccurrence})')
+    ax.axis("off")
+    return fig, None
 
-# Helper function to convert Matplotlib figure to Base64 image
-def fig_to_base64(fig):
-    buf = BytesIO()
-    fig.savefig(buf, format="png", bbox_inches='tight', dpi=150)
-    buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-    plt.close(fig) # Close the figure to free up memory
-    return f"data:image/png;base64,{img_base64}"
+# --- Gemini AI Summarization Function ---
+@st.cache_data(show_spinner="Generating AI Summary with Gemini...")
+def get_gemini_summary(text_to_summarize, model):
+    if not model:
+        return "Gemini AI is not available. Please provide a valid API key."
 
-# --- Report Generation Function ---
-def generate_html_report(overall_summary_df, question_analyses, gemini_overall_summary=None):
+    try:
+        # Gemini often prefers list of strings for content, even for single requests
+        response = model.generate_content([f"Summarize the following feedback comments concisely, highlight key themes, and identify actionable insights:\n\n{text_to_summarize}"])
+        if response.candidates:
+            # st.write("Gemini Raw Response:", response) # Debugging line
+            # st.write("Gemini Prompt Feedback:", response.prompt_feedback) # Debugging line
+            return response.text
+        else:
+            block_reason = "Unknown reason"
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                block_reason = response.prompt_feedback.block_reason.name
+            return f"Gemini did not return a summary. Content may have been blocked due to safety concerns. Block reason: '{block_reason}'."
+    except Exception as e:
+        return f"Error connecting to Gemini for summary: '{e}'. This might be due to safety filters or an API issue."
+
+# --- HTML Report Generation ---
+def create_html_report(df, selected_text_columns, analyses_results):
     html_content = f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Feedback Analysis Report</title>
+        <title>Feedback Analysis Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}</title>
         <style>
             body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 20px; }}
-            h1, h2, h3, h4 {{ color: #0056b3; }}
-            .container {{ max-width: 1200px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-            .section {{ margin-bottom: 30px; padding: 15px; border: 1px solid #eee; border-radius: 5px; }}
-            .section h3 {{ border-bottom: 2px solid #007bff; padding-bottom: 5px; margin-bottom: 15px; }}
-            table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
+            h1, h2, h3 {{ color: #005f73; border-bottom: 2px solid #e0e0e0; padding-bottom: 5px; margin-top: 30px; }}
+            .container {{ max-width: 1200px; margin: auto; padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+            .section {{ margin-bottom: 40px; }}
+            .chart-img {{ max-width: 100%; height: auto; display: block; margin: 15px auto; border: 1px solid #ddd; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
             th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
             th {{ background-color: #f2f2f2; }}
-            .plot-container {{ width: 100%; overflow-x: auto; margin-bottom: 20px; }}
-            .dataframe {{ overflow-x: auto; margin-bottom: 20px; }}
-            .info-box {{ background-color: #e0f7fa; border-left: 5px solid #00bcd4; padding: 10px; margin-top: 10px; border-radius: 4px; }}
-            .warning-box {{ background-color: #fff3e0; border-left: 5px solid #ff9800; padding: 10px; margin-top: 10px; border-radius: 4px; }}
-            .image-container {{ text-align: center; margin-top: 20px; }}
-            .image-container img {{ max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; }}
+            .st-dataframe {{ overflow-x: auto; }} /* Allow horizontal scroll for dataframes */
+            .info-box {{ background-color: #e6f7ff; border-left: 5px solid #2196f3; padding: 10px; margin-bottom: 15px; }}
+            .warning-box {{ background-color: #fff3e0; border-left: 5px solid #ff9800; padding: 10px; margin-bottom: 15px; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Feedback Analysis Report</h1>
-            <p>Generated: {pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+            <p><strong>Report Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            <p>This report provides an in-depth analysis of customer feedback data.</p>
 
             <div class="section">
-                <h2>Overall Feedback Summary</h2>
-                <div class="dataframe">
-                    {overall_summary_df.to_html(index=False)}
+                <h2>1. Data Overview</h2>
+                <h3>Original Data Sample ({df.shape[0]} rows)</h3>
+                <div class="st-dataframe">
+                    {df.head().to_html()}
                 </div>
+                <p>Selected text columns for analysis: {', '.join(selected_text_columns)}</p>
             </div>
-    """
 
-    if gemini_overall_summary:
-        html_content += f"""
             <div class="section">
-                <h2>Gemini's Overall Insights</h2>
-                <div class="info-box">
-                    <p>{gemini_overall_summary}</p>
-                </div>
+                <h2>2. Sentiment Analysis</h2>
+                {analyses_results.get('sentiment_analysis', '<p>No sentiment analysis data.</p>')}
             </div>
-        """
 
-    for analysis in question_analyses:
-        col = analysis['question_col']
-        html_content += f"""
             <div class="section">
-                <h2>Analysis for: {col}</h2>
-        """
-        # Sentiment Breakdown
-        if analysis['sentiment_plot_html']:
-            html_content += f"""
-                <h3>📊 Sentiment Breakdown</h3>
-                <div class="plot-container">{analysis['sentiment_plot_html']}</div>
-            """
-        else:
-            html_content += f"<div class='info-box'>No meaningful responses for sentiment analysis.</div>"
+                <h2>3. Key Phrase Analysis</h2>
+                <h3>Top Keywords (Unigrams)</h3>
+                {analyses_results.get('top_keywords_html', '<p>No top keywords data.</p>')}
+                <h3>Top Phrases (Bigrams)</h3>
+                {analyses_results.get('top_bigrams_html', '<p>No top bigrams data.</p>')}
+                <h3>Top Phrases (Trigrams)</h3>
+                {analyses_results.get('top_trigrams_html', '<p>No top trigrams data.</p>')}
+            </div>
 
-        # Top Keywords
-        if analysis['top_keywords_text']:
-            html_content += f"""
-                <h3>🔤 Top Keywords</h3>
-                <ul>{''.join([f'<li>{kw}</li>' for kw in analysis['top_keywords_text'].split(', ') if kw != 'N/A'])}</ul>
-            """
-        else:
-            html_content += f"<div class='info-box'>No significant keywords found.</div>"
+            <div class="section">
+                <h2>4. Response Length Distribution</h2>
+                {analyses_results.get('response_length_plot', '<p>No response length plot.</p>')}
+            </div>
 
-        # Top N-grams
-        if analysis['top_bigrams_text'] or analysis['top_trigrams_text']:
-            html_content += f"""
-                <h3>🔗 Top Phrases (Bigrams & Trigrams)</h3>
-            """
-            if analysis['top_bigrams_text'] and analysis['top_bigrams_text'] != 'N/A':
-                html_content += f"""
-                    <h4>Bigrams (2-word phrases):</h4>
-                    <ul>{''.join([f'<li>{gram}</li>' for gram in analysis['top_bigrams_text'].split(', ')])}</ul>
-                """
-            if analysis['top_trigrams_text'] and analysis['top_trigrams_text'] != 'N/A':
-                html_content += f"""
-                    <h4>Trigrams (3-word phrases):</h4>
-                    <ul>{''.join([f'<li>{gram}</li>' for gram in analysis['top_trigrams_text'].split(', ')])}</ul>
-                """
-        else:
-            html_content += f"<div class='info-box'>No significant N-grams found.</div>"
+            <div class="section">
+                <h2>5. Emotion Detection</h2>
+                {analyses_results.get('emotion_analysis_plot', '<p>No emotion analysis plot.</p>')}
+            </div>
 
-        # Frequent Responses
-        if analysis['frequent_responses_html']:
-            html_content += f"""
-                <h3>📋 Frequent Responses (2+ words)</h3>
-                <div class="dataframe">{analysis['frequent_responses_html']}</div>
-            """
-        else:
-            html_content += f"<div class='info-box'>No frequent multi-word responses found.</div>"
-
-        # Emotion Detection
-        if analysis['emotion_plot_html']:
-            html_content += f"""
-                <h3>🎭 Emotion Detection</h3>
-                <div class="plot-container">{analysis['emotion_plot_html']}</div>
-            """
-        else:
-            html_content += f"<div class='info-box'>No strong emotions detected or not enough data.</div>"
-
-        # Customer Effort Score
-        if analysis['ces_plot_html']:
-            html_content += f"""
-                <h3>💪 Customer Effort Score (CES) Approximation</h3>
-                <div class="plot-container">{analysis['ces_plot_html']}</div>
-            """
-        else:
-            html_content += f"<div class='info-box'>No meaningful responses for Customer Effort Score analysis.</div>"
-
-        # Word Cloud
-        if analysis['word_cloud_image_base64']:
-            html_content += f"""
-                <h3>☁️ Word Cloud</h3>
-                <div class="image-container"><img src="{analysis['word_cloud_image_base64']}" alt="Word Cloud"></div>
-            """
-        else:
-            html_content += f"<div class='info-box'>Not enough meaningful words to generate a word cloud.</div>"
-
-        # Word Co-occurrence
-        if analysis['cooccurrence_graph_image_base64']:
-            html_content += f"""
-                <h3>🕸️ Word Co-occurrence Network</h3>
-                <div class="image-container"><img src="{analysis['cooccurrence_graph_image_base64']}" alt="Word Co-occurrence Graph"></div>
-            """
-        else:
-            html_content += f"<div class='info-box'>Not enough significant co-occurrences to build a graph.</div>"
+            <div class="section">
+                <h2>6. Customer Effort Score (CES) Approximation</h2>
+                {analyses_results.get('ces_analysis_plot', '<p>No CES analysis plot.</p>')}
+            </div>
             
-        # Response Length
-        if analysis['response_length_plot_html']:
-            html_content += f"""
-                <h3>📏 Response Length Analysis (Word Count)</h3>
-                <p><strong>Average Word Count:</strong> {analysis['response_length_stats'].get('Average Word Count', 0):.2f}</p>
-                <p><strong>Median Word Count:</strong> {analysis['response_length_stats'].get('Median Word Count', 0):.0f}</p>
-                <p><strong>Min Word Count:</strong> {analysis['response_length_stats'].get('Min Word Count', 0):.0f}</p>
-                <p><strong>Max Word Count:</strong> {analysis['response_length_stats'].get('Max Word Count', 0):.0f}</p>
-                <div class="plot-container">{analysis['response_length_plot_html']}</div>
-            """
-        else:
-            html_content += f"<div class='info-box'>No meaningful responses to analyze length.</div>"
+            <div class="section">
+                <h2>7. Word Cloud</h2>
+                {analyses_results.get('wordcloud_image', '<p>No word cloud generated.</p>')}
+            </div>
 
+            <div class="section">
+                <h2>8. Word Co-occurrence Network</h2>
+                {analyses_results.get('co_occurrence_graph', '<p>No co-occurrence graph generated.</p>')}
+            </div>
 
-        # Gemini Summary
-        if analysis['gemini_summary_text']:
-            html_content += f"""
-                <h3>🧠 Gemini Summary</h3>
-                <div class="info-box">
-                    <p>{analysis['gemini_summary_text']}</p>
-                </div>
-            """
-        elif analysis['gemini_summary_on'] and not gemini: # If Gemini was supposed to run but wasn't initialized
-             html_content += f"<div class='warning-box'>Gemini summary could not be generated (API key not initialized).</div>"
-        else:
-            html_content += f"<div class='info-box'>Not enough meaningful responses or Gemini summary was not enabled.</div>"
-
-        html_content += "</div>" # Close section
-    html_content += """
+            <div class="section">
+                <h2>9. Gemini AI Summaries</h2>
+                {analyses_results.get('gemini_summary_overall', '<p>No overall Gemini summary.</p>')}
+                {analyses_results.get('gemini_summary_questions', '<p>No per-question Gemini summaries.</p>')}
+            </div>
         </div>
     </body>
     </html>
     """
     return html_content
 
-# 📊 Feedback Analyzer App
-st.set_page_config("Feedback Analyzer", layout="wide")
+def fig_to_base64(fig):
+    """Converts a matplotlib figure to a base64 encoded image."""
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close(fig) # Close the figure to free up memory
+    return f'<img src="data:image/png;base64,{img_base64}" class="chart-img"/>'
+
+
+# --- Main Streamlit Application ---
+
 st.title("📋 Feedback Analyzer Tool")
+st.markdown("Upload your feedback data (CSV or Excel) to get insights into sentiments, key phrases, emotions, and more, powered by Gemini AI.")
 
-# Initialize session state for storing Gemini's overall summary
-if 'gemini_overall_answer' not in st.session_state:
-    st.session_state['gemini_overall_answer'] = None
+uploaded_file = st.sidebar.file_uploader("Upload your CSV or Excel file", type=["csv", "xls", "xlsx"], key="file_uploader") # Added key
 
-# Sidebar: Gemini API Key
-with st.sidebar:
-    st.header("🔐 Gemini API Key")
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        api_key = st.secrets.get("GEMINI_API_KEY")
+if uploaded_file:
+    df = load_data(uploaded_file)
+    if df is not None:
+        st.sidebar.success("File uploaded successfully!")
+        st.sidebar.dataframe(df.head(), use_container_width=True, key="sidebar_df_head") # Added key
 
-    gemini_key_source = "None"
-    if api_key:
-        st.success("Gemini API Key loaded successfully.")
-        gemini_key_source = "secrets.toml or Environment Variable"
-    else:
-        api_key = st.text_input("Enter Gemini API Key", type="password")
-        if api_key:
-            st.info("API Key entered manually for this session.")
-            gemini_key_source = "Manual Input"
-        else:
-            st.warning("Please enter your Gemini API key in the sidebar or save it in secrets.toml.")
+        text_columns = [col for col in df.columns if df[col].dtype == 'object']
+        if not text_columns:
+            st.error("No text (object) columns found in your data. Please ensure your feedback is in a text format.")
+            st.stop()
 
-    gemini = None
-    if api_key:
-        try:
-            with st.spinner("Connecting to Gemini..."):
-                genai.configure(api_key=api_key)
-                gemini = genai.GenerativeModel("gemini-1.5-flash")
-                test_response = gemini.generate_content("hello", safety_settings={'HARASSMENT': 'block_none', 'HATE_SPEECH': 'block_none', 'SEXUALLY_EXPLICIT': 'block_none', 'DANGEROUS_CONTENT': 'block_none'})
-                if test_response and test_response.text:
-                    st.success(f"Gemini is ready and connected! (Source: {gemini_key_source})")
-                else:
-                    st.error("Gemini connection failed. Check API key or network. Response was empty or problematic.")
-                    gemini = None
-        except Exception as e:
-            st.error(f"Error connecting to Gemini: {e}. Please check your API key.")
-            gemini = None
-
-
-# Upload File
-uploaded = st.file_uploader("📤 Upload CSV or Excel Feedback File", type=["csv", "xlsx"])
-
-if uploaded:
-    path, cols, df = preprocess_and_save(uploaded)
-    if path:
-        st.subheader("📄 Preview Data")
-        st.dataframe(df, use_container_width=True)
-
-        ignore = ["name", "email", "id", "timestamp"]
-        text_cols = [c for c in df.select_dtypes(include='object').columns if c.lower() not in ignore]
-
-        st.markdown("---")
-        st.markdown("## ✅ Select Questions to Analyze")
-        selected = st.multiselect("Choose Questions", text_cols, default=text_cols[:min(len(text_cols), 2)])
-
-        # Store all individual question analysis results for report generation
-        all_question_analyses_for_report = []
-        summary_data = []
-
-        for i, col in enumerate(selected):
-            responses = df[col].astype(str).dropna().tolist()
-            meaningful_responses = [r for r in responses if len(r.strip()) > 5 and not r.isnumeric()]
-
-            # Perform all analyses (cached functions will speed this up if inputs don't change)
-            sentiments = classify_sentiments(meaningful_responses)
-            kws_results = extract_keywords_tfidf(meaningful_responses)
-            bigrams_results = extract_ngrams(meaningful_responses, n_range=(2, 2))
-            trigrams_results = extract_ngrams(meaningful_responses, n_range=(3, 3))
-            response_lengths_df, response_length_stats = analyze_response_length(meaningful_responses)
-            emotion_df = detect_emotions(meaningful_responses)
-            ces_counts_df = calculate_ces_approximation(meaningful_responses)
-            cooccurrence_graph = generate_cooccurrence_graph(meaningful_responses)
-
-
-            st.markdown(f"---")
-            with st.expander(f"🔍 Analysis: **{col}**", expanded=True):
-                st.markdown("### Choose Analysis Types for this Question:")
-                col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
-                with col_c1:
-                    pie_chart_on = st.checkbox("📊 Sentiment Breakdown", value=True, key=f"pie_toggle_{col}_{i}")
-                    keywords_on = st.checkbox("🔤 Top Keywords (List)", value=True, key=f"kw_toggle_{col}_{i}")
-                with col_c2:
-                    ngrams_on = st.checkbox("🔗 Top Phrases (N-grams)", value=True, key=f"ngrams_toggle_{col}_{i}")
-                    response_length_on = st.checkbox("📏 Response Length", value=True, key=f"len_toggle_{col}_{i}")
-                with col_c3:
-                    frequent_on = st.checkbox("📋 Frequent Responses", value=True, key=f"freq_toggle_{col}_{i}")
-                    emotion_on = st.checkbox("🎭 Emotion Detection", value=True, key=f"emotion_toggle_{col}_{i}")
-                with col_c4:
-                    ces_on = st.checkbox("💪 Customer Effort Score", value=True, key=f"ces_toggle_{col}_{i}")
-                    cooccurrence_on = st.checkbox("🕸️ Word Co-occurrence", value=True, key=f"cooccur_toggle_{col}_{i}")
-                with col_c5:
-                    word_cloud_on = st.checkbox("☁️ Word Cloud", value=True, key=f"wc_toggle_{col}_{i}")
-                    gemini_on = st.checkbox("🧠 Gemini Summary", value=True, key=f"gem_sum_toggle_{col}_{i}")
-
-
-                st.markdown("---")
-
-                col1, col2 = st.columns(2)
-
-                # Store analysis outputs for report generation
-                current_question_analysis = {
-                    "question_col": col,
-                    "sentiment_plot_html": "",
-                    "top_keywords_text": "",
-                    "top_bigrams_text": "",
-                    "top_trigrams_text": "",
-                    "frequent_responses_html": "",
-                    "emotion_plot_html": "",
-                    "ces_plot_html": "",
-                    "word_cloud_image_base64": "",
-                    "cooccurrence_graph_image_base64": "",
-                    "response_length_plot_html": "",
-                    "response_length_stats": response_length_stats,
-                    "gemini_summary_text": "",
-                    "gemini_summary_on": gemini_on # To indicate if Gemini was requested
-                }
-
-                with col1:
-                    if pie_chart_on:
-                        st.markdown("### 📊 Sentiment Breakdown")
-                        if sentiments:
-                            pie_df = pd.DataFrame(Counter(sentiments).items(), columns=["Sentiment", "Count"])
-                            fig = px.pie(pie_df, names="Sentiment", values="Count", title="Sentiment Breakdown")
-                            st.plotly_chart(fig, use_container_width=True)
-                            current_question_analysis["sentiment_plot_html"] = fig.to_html(full_html=False)
-                        else:
-                            st.info("No meaningful responses available for sentiment analysis for this question.")
-
-                    if keywords_on:
-                        st.markdown("### 🔤 Top Keywords")
-                        if kws_results:
-                            keyword_strings = [f"- **{kw}** (Score: {score:.2f})" for kw, score in kws_results]
-                            st.markdown("\n".join(keyword_strings))
-                            current_question_analysis["top_keywords_text"] = ", ".join([kw for kw, _ in kws_results])
-                        else:
-                            st.info("No significant keywords found for this question.")
-                            current_question_analysis["top_keywords_text"] = "N/A"
-
-                    if ngrams_on:
-                        st.markdown("### 🔗 Top Phrases (Bigrams & Trigrams)")
-                        if bigrams_results or trigrams_results:
-                            if bigrams_results:
-                                st.markdown("#### Bigrams (2-word phrases):")
-                                bigram_strings = [f"- **{gram}** (Score: {score:.2f})" for gram, score in bigrams_results]
-                                st.markdown("\n".join(bigram_strings))
-                                current_question_analysis["top_bigrams_text"] = ", ".join([gram for gram, _ in bigrams_results])
-                            else:
-                                st.info("No significant bigrams found.")
-                                current_question_analysis["top_bigrams_text"] = "N/A"
-
-                            if trigrams_results:
-                                st.markdown("#### Trigrams (3-word phrases):")
-                                trigram_strings = [f"- **{gram}** (Score: {score:.2f})" for gram, score in trigrams_results]
-                                st.markdown("\n".join(trigram_strings))
-                                current_question_analysis["top_trigrams_text"] = ", ".join([gram for gram, _ in trigrams_results])
-                            else:
-                                st.info("No significant trigrams found.")
-                                current_question_analysis["top_trigrams_text"] = "N/A"
-                        else:
-                            st.info("No significant N-grams found for this question.")
-                            current_question_analysis["top_bigrams_text"] = "N/A"
-                            current_question_analysis["top_trigrams_text"] = "N/A"
-
-                    if frequent_on:
-                        st.markdown("### 📋 Frequent Responses (2+ words)")
-                        if meaningful_responses:
-                            freq_df = pd.Series(meaningful_responses).value_counts().reset_index()
-                            freq_df.columns = ["Response", "Count"]
-                            freq_df = freq_df[freq_df["Response"].apply(lambda x: len(x.split()) >= 2 and len(x) > 10)]
-                            if not freq_df.empty:
-                                st.dataframe(freq_df.head(10), use_container_width=True)
-                                current_question_analysis["frequent_responses_html"] = freq_df.head(10).to_html(index=False)
-                            else:
-                                st.info("No frequent multi-word responses (with more than 10 characters) found for this question.")
-                        else:
-                            st.info("No meaningful responses to find frequent patterns.")
-
-                    if emotion_on:
-                        st.markdown("### 🎭 Emotion Detection")
-                        if not emotion_df.empty:
-                            fig = px.bar(emotion_df, x="Emotion", y="Percentage",
-                                         title="Detected Emotions in Feedback",
-                                         labels={"Percentage": "Percentage of Responses Mentioning Emotion"},
-                                         color="Emotion")
-                            st.plotly_chart(fig, use_container_width=True)
-                            current_question_analysis["emotion_plot_html"] = fig.to_html(full_html=False)
-                        else:
-                            st.info("No strong emotions detected or not enough data for emotion analysis.")
-
-                with col2:
-                    if word_cloud_on:
-                        st.markdown("### ☁️ Word Cloud")
-                        if meaningful_responses:
-                            text_for_wordcloud = " ".join(meaningful_responses)
-                            wordcloud_img = generate_wordcloud(text_for_wordcloud)
-                            if wordcloud_img:
-                                fig_wc, ax_wc = plt.subplots(figsize=(10, 5))
-                                ax_wc.imshow(wordcloud_img, interpolation='bilinear')
-                                ax_wc.axis('off')
-                                st.pyplot(fig_wc)
-                                current_question_analysis["word_cloud_image_base64"] = fig_to_base64(fig_wc)
-                            else:
-                                st.info("Not enough meaningful words to generate a word cloud for this question.")
-                        else:
-                            st.info("No meaningful responses to generate a word cloud for this question.")
-
-                    if response_length_on:
-                        st.markdown("### 📏 Response Length Analysis (Word Count)")
-                        if not response_lengths_df.empty:
-                            st.write(f"**Average Word Count:** {response_length_stats['Average Word Count']:.2f}")
-                            st.write(f"**Median Word Count:** {response_length_stats['Median Word Count']:.0f}")
-                            st.write(f"**Min Word Count:** {response_length_stats['Min Word Count']:.0f}")
-                            st.write(f"**Max Word Count:** {response_length_stats['Max Word Count']:.0f}")
-                            fig_hist = px.histogram(response_lengths_df, x="Word Count", nbins=20,
-                                                    title="Distribution of Response Word Counts")
-                            st.plotly_chart(fig_hist, use_container_width=True)
-                            current_question_analysis["response_length_plot_html"] = fig_hist.to_html(full_html=False)
-                        else:
-                            st.info("No meaningful responses to analyze length for this question.")
-
-                    if ces_on:
-                        st.markdown("### 💪 Customer Effort Score (CES) Approximation")
-                        if not ces_counts_df.empty:
-                            fig = px.bar(ces_counts_df, x="Effort Level", y="Count",
-                                         title="Approximate Customer Effort Levels",
-                                         color="Effort Level",
-                                         category_orders={"Effort Level": ["Low Effort", "Neutral Effort", "Mixed (leaning Low)", "Mixed (leaning High)", "High Effort"]})
-                            st.plotly_chart(fig, use_container_width=True)
-                            current_question_analysis["ces_plot_html"] = fig.to_html(full_html=False)
-                        else:
-                            st.info("No meaningful responses for Customer Effort Score analysis.")
-
-                    if cooccurrence_on:
-                        st.markdown("### 🕸️ Word Co-occurrence Network")
-                        if cooccurrence_graph:
-                            fig_co, ax_co = plt.subplots(figsize=(10, 10))
-                            pos = nx.spring_layout(cooccurrence_graph, k=0.5, iterations=50)
-                            node_sizes = [cooccurrence_graph.nodes[node].get('size', 1) * 100 for node in cooccurrence_graph.nodes()]
-                            nx.draw_networkx_nodes(cooccurrence_graph, pos, ax=ax_co, node_size=node_sizes, node_color='skyblue', alpha=0.9)
-                            edge_weights = [cooccurrence_graph.edges[edge]['weight'] * 0.5 for edge in cooccurrence_graph.edges()]
-                            nx.draw_networkx_edges(cooccurrence_graph, pos, ax=ax_co, width=edge_weights, alpha=0.6, edge_color='gray')
-                            nx.draw_networkx_labels(cooccurrence_graph, pos, ax=ax_co, font_size=9, font_weight='bold')
-                            ax_co.set_title("Top Word Co-occurrence Network")
-                            ax_co.axis('off')
-                            st.pyplot(fig_co)
-                            current_question_analysis["cooccurrence_graph_image_base64"] = fig_to_base64(fig_co)
-                        else:
-                            st.info("Not enough significant co-occurrences to build a graph. Try more data or adjust parameters.")
-
-                    if gemini_on:
-                        st.markdown("### 🧠 Gemini Summary")
-                        if not gemini:
-                            st.warning("Gemini is not initialized. Please ensure your API key is correctly set in the sidebar or secrets.toml.")
-                        else:
-                            try:
-                                if meaningful_responses:
-                                    sample_responses = "\n".join(pd.Series(meaningful_responses).dropna().sample(min(25, len(meaningful_responses)), random_state=42))
-                                    prompt = f"""Provide a concise, useful, and actionable summary of the key themes, overall sentiment (positive/negative/neutral breakdown), and specific suggestions for improvement from the following responses to the question: "{col}". Aim for a summary that is easy to read and provides valuable insights, without being too long or too short. Focus on a length that is 'considerable' and 'just useful'.
-
-                                    Feedbacks:
-                                    {sample_responses}"""
-                                    with st.spinner("Generating Gemini summary..."):
-                                        reply = gemini.generate_content(prompt)
-                                        st.info(reply.text.strip())
-                                        current_question_analysis["gemini_summary_text"] = reply.text.strip()
-                                else:
-                                    st.info("Not enough meaningful responses to generate a Gemini summary for this question.")
-                            except Exception as e:
-                                st.error(f"Gemini Error for '{col}': {e}. Please ensure your API key is valid and there are sufficient responses.")
-
-            # Append current question's analysis data for report
-            all_question_analyses_for_report.append(current_question_analysis)
-
-            # Collect for overall summary (unchanged)
-            summary_data.append({
-                "Question": col,
-                "Total Responses": len(responses),
-                "Meaningful Responses": len(meaningful_responses),
-                "👍 Positive": sentiments.count("Positive"),
-                "👎 Negative": sentiments.count("Negative"),
-                "😐 Neutral": sentiments.count("Neutral"),
-                "Top Keywords": ", ".join([kw for kw, _ in kws_results]) if kws_results else "N/A",
-                "Top Bigrams": ", ".join([gram for gram, _ in bigrams_results]) if bigrams_results else "N/A",
-                "Top Trigrams": ", ".join([gram for gram, _ in trigrams_results]) if trigrams_results else "N/A",
-                "Avg Response Length": f"{response_length_stats.get('Average Word Count', 0):.2f}" if response_length_stats else "N/A",
-                "Top Emotions": ", ".join(emotion_df["Emotion"].tolist()[:3]) if not emotion_df.empty else "N/A",
-                "CES Breakdown": ", ".join([f"{row['Effort Level']}: {row['Count']}" for idx, row in ces_counts_df.iterrows()]) if not ces_counts_df.empty else "N/A"
-            })
-
-        # ---
-        # 📋 Overall Summary Table
-        st.markdown("---")
-        st.markdown("## 🧾 Overall Feedback Summary")
-        overall_summary_df = pd.DataFrame(summary_data)
-        st.dataframe(overall_summary_df, use_container_width=True)
-
-        # ---
-        # 💬 Ask Gemini
-        st.markdown("---")
-        st.markdown("## 💬 Ask Gemini About All Feedback")
-        userq = st.text_input("Ask your question about the overall feedback insights")
-        if st.button("Ask Gemini about overall feedback"):
-            if gemini:
-                try:
-                    tabular = overall_summary_df.to_markdown(index=False)
-                    prompt = f"""You're a feedback report analyst. Given this summary table:\n\n{tabular}\n\nAnswer this question:\n{userq}\n\nProvide a concise and direct answer, focusing on actionable insights derived from the data."""
-                    with st.spinner("Generating Gemini answer..."):
-                        final = gemini.generate_content(prompt)
-                        st.markdown("### 🧠 Gemini Answer")
-                        st.info(final.text.strip())
-                        st.session_state['gemini_overall_answer'] = final.text.strip() # Store for report
-                except Exception as e:
-                    st.error(f"Gemini Error: {e}. Please ensure your API key is valid.")
-            else:
-                st.warning("Gemini is not initialized. Please enter your API key or ensure it's in secrets.toml.")
-
-        # ---
-        # ⬇️ Download Analysis Report
-        st.markdown("---")
-        st.markdown("## ⬇️ Download Analysis Report")
-        st.info("Click the button below to generate and download a comprehensive HTML report of the analysis shown above.")
-
-        report_html = generate_html_report(overall_summary_df, all_question_analyses_for_report, st.session_state['gemini_overall_answer'])
-
-        st.download_button(
-            label="Generate & Download HTML Report",
-            data=report_html,
-            file_name="feedback_analysis_report.html",
-            mime="text/html"
+        selected_text_columns = st.sidebar.multiselect(
+            "Select text columns for analysis:",
+            options=text_columns,
+            default=text_columns[0] if text_columns else [],
+            key="column_multiselect" # Added key
         )
 
+        if not selected_text_columns:
+            st.warning("Please select at least one text column for analysis.")
+            st.stop()
 
-elif not uploaded:
-    st.info("Upload a CSV or Excel file to begin feedback analysis.")
+        # Combine selected text columns into a single series for overall analysis
+        # Fill NaN values with empty strings before joining
+        combined_feedback_series = df[selected_text_columns].astype(str).fillna('').agg(' '.join, axis=1)
+        full_text_for_analysis = " ".join(combined_feedback_series.dropna().tolist())
+
+        st.header("Overall Feedback Analysis")
+        st.info("Results below are based on the combined text from selected columns.")
+
+        # --- Display Raw Data (Optional) ---
+        if st.checkbox("Show Raw Data Sample", key="show_raw_data_checkbox"): # Added key
+            st.subheader("Raw Data Sample")
+            st.dataframe(df.head(10), use_container_width=True, key="raw_data_df") # Added key
+
+        # --- Sentiment Analysis ---
+        st.subheader("Sentiment Analysis")
+        with st.spinner("Analyzing sentiments..."):
+            sentiment_df = pd.DataFrame()
+            for col in selected_text_columns:
+                sentiment_df[f'{col}_Sentiment'] = analyze_sentiment(df[col])
+            
+            # Combine all sentiment columns into a single Series for overall count
+            overall_sentiments = pd.concat([sentiment_df[col] for col in sentiment_df.columns])
+            sentiment_counts = overall_sentiments.value_counts(normalize=True) * 100
+            
+            if not sentiment_counts.empty:
+                fig_sentiment = px.pie(
+                    values=sentiment_counts.values,
+                    names=sentiment_counts.index,
+                    title="Overall Sentiment Distribution",
+                    hole=0.4
+                )
+                fig_sentiment.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_sentiment, use_container_width=True, key="overall_sentiment_pie") # Added key
+                
+                st.write("Sentiment Breakdown:")
+                st.dataframe(sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}), use_container_width=True, key="overall_sentiment_df") # Added key
+            else:
+                st.info("Not enough data to perform sentiment analysis.")
+
+        # --- Key Phrase Analysis ---
+        st.subheader("Key Phrase Analysis")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("### Top Keywords (Unigrams)")
+            top_keywords = get_top_n_grams(combined_feedback_series, n=1, top_n=15)
+            st.dataframe(top_keywords, use_container_width=True, key="top_keywords_df") # Added key
+
+        with col2:
+            st.markdown("### Top Phrases (Bigrams)")
+            top_bigrams = get_top_n_grams(combined_feedback_series, n=2, top_n=10)
+            st.dataframe(top_bigrams, use_container_width=True, key="top_bigrams_df") # Added key
+
+        with col3:
+            st.markdown("### Top Phrases (Trigrams)")
+            top_trigrams = get_top_n_grams(combined_feedback_series, n=3, top_n=5)
+            st.dataframe(top_trigrams, use_container_width=True, key="top_trigrams_df") # Added key
+
+        # --- Response Length Distribution ---
+        st.subheader("Response Length Distribution")
+        response_lengths = analyze_response_length(combined_feedback_series)
+        if not response_lengths.empty and response_lengths.max() > 0:
+            fig_length = px.histogram(response_lengths, nbins=30, title="Distribution of Response Lengths (Word Count)")
+            fig_length.update_xaxes(title_text="Word Count")
+            fig_length.update_yaxes(title_text="Number of Responses")
+            st.plotly_chart(fig_length, use_container_width=True, key="response_length_hist") # Added key
+            st.write(f"Average response length: {response_lengths.mean():.2f} words")
+            st.write(f"Median response length: {response_lengths.median():.0f} words")
+        else:
+            st.info("Not enough data to analyze response lengths.")
+
+
+        # --- Emotion Detection ---
+        st.subheader("Emotion Detection (Keyword-Based)")
+        with st.spinner("Detecting emotions..."):
+            emotion_percentages = detect_emotions(combined_feedback_series)
+            emotion_df = pd.DataFrame(emotion_percentages.items(), columns=['Emotion', 'Percentage']).sort_values(by='Percentage', ascending=False)
+            
+            if not emotion_df.empty and emotion_df['Percentage'].sum() > 0:
+                fig_emotion = px.bar(
+                    emotion_df,
+                    x='Emotion',
+                    y='Percentage',
+                    title="Detected Emotions in Feedback",
+                    color='Percentage',
+                    color_continuous_scale=px.colors.sequential.Teal
+                )
+                st.plotly_chart(fig_emotion, use_container_width=True, key="emotion_bar_chart") # Added key
+                st.dataframe(emotion_df, use_container_width=True, key="emotion_df") # Added key
+            else:
+                st.info("No specific emotion keywords detected in the feedback.")
+
+        # --- Customer Effort Score (CES) Approximation ---
+        st.subheader("Customer Effort Score (CES) Approximation")
+        with st.spinner("Approximating CES..."):
+            ces_scores = calculate_ces(combined_feedback_series)
+            ces_counts = pd.Series(ces_scores).value_counts(normalize=True) * 100
+            
+            if not ces_counts.empty and ces_counts.sum() > 0:
+                fig_ces = px.pie(
+                    values=ces_counts.values,
+                    names=ces_counts.index,
+                    title="Approximated Customer Effort Score",
+                    hole=0.4
+                )
+                fig_ces.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_ces, use_container_width=True, key="ces_pie_chart") # Added key
+                st.dataframe(ces_counts.reset_index().rename(columns={'index': 'Effort Level', 0: 'Percentage'}), use_container_width=True, key="ces_df") # Added key
+            else:
+                st.info("Not enough data to approximate Customer Effort Score.")
+
+
+        # --- Word Cloud ---
+        st.subheader("Word Cloud")
+        with st.spinner("Generating word cloud..."):
+            text_for_wordcloud = " ".join(combined_feedback_series.dropna().tolist())
+            wordcloud_fig = generate_wordcloud(text_for_wordcloud)
+            if wordcloud_fig:
+                st.pyplot(wordcloud_fig, key="wordcloud_plot") # Added key
+            else:
+                st.info("Not enough relevant text to generate a word cloud.")
+
+        # --- Word Co-occurrence Network ---
+        st.subheader("Word Co-occurrence Network")
+        min_cooccurrence = st.slider("Minimum co-occurrence for graph:", 1, 10, 2, key="min_cooccurrence_slider") # Added key
+        with st.spinner("Generating co-occurrence graph..."):
+            co_occurrence_fig, co_occurrence_message = generate_co_occurrence_graph(combined_feedback_series, min_cooccurrence)
+            if co_occurrence_fig:
+                st.pyplot(co_occurrence_fig, key="cooccurrence_plot") # Added key
+            else:
+                st.info(co_occurrence_message if co_occurrence_message else "No co-occurrences found to display a graph.")
+
+        # --- Gemini AI Summarization ---
+        st.subheader("Gemini AI Summarization")
+        if st.session_state['gemini_model']:
+            if st.button("Generate Overall AI Summary", key="generate_overall_ai_summary_btn"): # Added key
+                with st.spinner("Asking Gemini to summarize overall feedback..."):
+                    overall_summary = get_gemini_summary(full_text_for_analysis, st.session_state['gemini_model'])
+                    st.markdown("#### Overall Summary by Gemini AI")
+                    st.write(overall_summary)
+                    # Store for report
+                    st.session_state['overall_gemini_summary_generated'] = overall_summary 
+
+            st.markdown("#### Summaries for Individual Feedback Questions (AI)")
+            for col in selected_text_columns:
+                question_text = df[col].astype(str).fillna("").tolist()
+                question_text_filtered = [text for text in question_text if text.strip()]
+                if question_text_filtered:
+                    question_feedback_combined = "\n".join(question_text_filtered)
+                    with st.expander(f"Generate Summary for: {col}", key=f"expander_{col}"): # Added key
+                        if st.button(f"Summarize '{col}'", key=f"summarize_btn_{col}"):
+                            with st.spinner(f"Asking Gemini to summarize '{col}'..."):
+                                question_summary = get_gemini_summary(question_feedback_combined, st.session_state['gemini_model'])
+                                st.write(question_summary)
+                                st.session_state[f'gemini_summary_{col}'] = question_summary # Store for report
+                else:
+                    st.info(f"No valid text responses in column '{col}' to summarize.")
+        else:
+            st.warning("Gemini AI features are disabled. Please provide an API key.")
+
+        # --- Generate and Download HTML Report ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Download Report")
+
+        if st.sidebar.button("Generate HTML Report", key="generate_html_report_btn"): # Added key
+            with st.spinner("Generating comprehensive report..."):
+                analyses_for_report = {}
+
+                # 1. Sentiment Analysis
+                sentiment_counts_html = ""
+                if not sentiment_counts.empty:
+                    sentiment_counts_html = sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}).to_html()
+                    fig_sentiment_report = px.pie(values=sentiment_counts.values, names=sentiment_counts.index, title="Overall Sentiment Distribution", hole=0.4)
+                    fig_sentiment_report.update_traces(textposition='inside', textinfo='percent+label')
+                    analyses_for_report['sentiment_analysis'] = f"<h3>Overall Sentiment Distribution</h3>{fig_to_base64(fig_sentiment_report)}<p>Sentiment Breakdown:</p>{sentiment_counts_html}"
+                else:
+                    analyses_for_report['sentiment_analysis'] = '<p>No sentiment analysis data.</p>'
+
+                # 2. Key Phrase Analysis
+                analyses_for_report['top_keywords_html'] = top_keywords.to_html() if not top_keywords.empty else '<p>No top keywords data.</p>'
+                analyses_for_report['top_bigrams_html'] = top_bigrams.to_html() if not top_bigrams.empty else '<p>No top bigrams data.</p>'
+                analyses_for_report['top_trigrams_html'] = top_trigrams.to_html() if not top_trigrams.empty else '<p>No top trigrams data.</p>'
+
+                # 3. Response Length
+                if not response_lengths.empty and response_lengths.max() > 0:
+                    fig_length_report = px.histogram(response_lengths, nbins=30, title="Distribution of Response Lengths (Word Count)")
+                    fig_length_report.update_xaxes(title_text="Word Count")
+                    fig_length_report.update_yaxes(title_text="Number of Responses")
+                    analyses_for_report['response_length_plot'] = f"<h3>Response Length Distribution</h3>{fig_to_base64(fig_length_report)}<p>Average: {response_lengths.mean():.2f} words, Median: {response_lengths.median():.0f} words</p>"
+                else:
+                    analyses_for_report['response_length_plot'] = '<p>No response length plot.</p>'
+
+                # 4. Emotion Detection
+                if not emotion_df.empty and emotion_df['Percentage'].sum() > 0:
+                    fig_emotion_report = px.bar(emotion_df, x='Emotion', y='Percentage', title="Detected Emotions in Feedback", color='Percentage', color_continuous_scale=px.colors.sequential.Teal)
+                    analyses_for_report['emotion_analysis_plot'] = f"<h3>Emotion Detection (Keyword-Based)</h3>{fig_to_base64(fig_emotion_report)}{emotion_df.to_html()}"
+                else:
+                    analyses_for_report['emotion_analysis_plot'] = '<p>No emotion analysis plot.</p>'
+
+                # 5. CES Approximation
+                if not ces_counts.empty and ces_counts.sum() > 0:
+                    fig_ces_report = px.pie(values=ces_counts.values, names=ces_counts.index, title="Approximated Customer Effort Score", hole=0.4)
+                    fig_ces_report.update_traces(textposition='inside', textinfo='percent+label')
+                    analyses_for_report['ces_analysis_plot'] = f"<h3>Customer Effort Score (CES) Approximation</h3>{fig_to_base64(fig_ces_report)}{ces_counts.reset_index().rename(columns={'index': 'Effort Level', 0: 'Percentage'}).to_html()}"
+                else:
+                    analyses_for_report['ces_analysis_plot'] = '<p>No CES analysis plot.</p>'
+
+                # 6. Word Cloud
+                if wordcloud_fig:
+                    analyses_for_report['wordcloud_image'] = fig_to_base64(wordcloud_fig)
+                else:
+                    analyses_for_report['wordcloud_image'] = '<p>No word cloud generated.</p>'
+
+                # 7. Co-occurrence Graph
+                if co_occurrence_fig:
+                    analyses_for_report['co_occurrence_graph'] = fig_to_base64(co_occurrence_fig)
+                else:
+                    analyses_for_report['co_occurrence_graph'] = f'<p>{co_occurrence_message if co_occurrence_message else "No co-occurrence graph generated."}</p>'
+
+                # 8. Gemini AI Summaries for Report
+                overall_summary_report = ""
+                # Check if overall summary was actually generated and stored in session state
+                if st.session_state['gemini_model'] and 'overall_gemini_summary_generated' in st.session_state and st.session_state['overall_gemini_summary_generated']:
+                     overall_summary_report = f"<h4>Overall Feedback Summary</h4><p>{st.session_state['overall_gemini_summary_generated']}</p>"
+
+                question_summaries_report = ""
+                if st.session_state['gemini_model']:
+                    for col in selected_text_columns:
+                        # Check if per-question summary was actually generated and stored in session state
+                        if f'gemini_summary_{col}' in st.session_state and st.session_state[f'gemini_summary_{col}']:
+                            question_summaries_report += f"<h4>Summary for '{col}'</h4><p>{st.session_state[f'gemini_summary_{col}']}</p>"
+                
+                analyses_for_report['gemini_summary_overall'] = overall_summary_report if overall_summary_report else '<p>No overall Gemini summary generated for report.</p>'
+                analyses_for_report['gemini_summary_questions'] = question_summaries_report if question_summaries_report else '<p>No per-question Gemini summaries generated for report.</p>'
+
+
+                html_report_content = create_html_report(df, selected_text_columns, analyses_for_report)
+                
+                b64_html = base64.b64encode(html_report_content.encode()).decode()
+                download_filename = f"feedback_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                
+                st.sidebar.markdown(
+                    f'<a href="data:text/html;base64,{b64_html}" download="{download_filename}">Click to Download HTML Report</a>',
+                    unsafe_allow_html=True
+                )
+                st.sidebar.success("Report generated!")
+            
+else:
+    st.info("Please upload a CSV or Excel file to begin the analysis.")
