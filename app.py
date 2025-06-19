@@ -49,15 +49,18 @@ def preprocess_and_save(file):
 @st.cache_data
 def classify_sentiments(texts):
     sentiments = []
-    for text in texts:
-        t = text.lower()
-        if any(w in t for w in [...]):
+    for t in texts:
+        if not isinstance(t, str):
+            t = str(t)  # Safely convert non-string input
+        t = t.lower()
+        if any(w in t for w in ["good", "great", "excellent", "love", "awesome", "helpful", "satisfied", "positive", "happy", "nice"]):
             sentiments.append("Positive")
-        elif any(w in t for w in [...]):
+        elif any(w in t for w in ["bad", "poor", "terrible", "hate", "worst", "issue", "problem", "slow", "unhappy"]):
             sentiments.append("Negative")
         else:
             sentiments.append("Neutral")
     return sentiments
+
 
 @st.cache_data
 def extract_keywords_tfidf(texts, top_n=10):
