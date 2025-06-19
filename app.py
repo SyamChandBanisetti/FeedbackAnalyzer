@@ -75,7 +75,7 @@ else:
     try:
         genai.configure(api_key=gemini_api_key)
         st.session_state['gemini_model'] = genai.GenerativeModel(
-            model_name="gemini-pro",
+            model_name="gemini-2.0-flash",
             safety_settings={
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
