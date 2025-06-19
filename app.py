@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+# import plotly.express as px # Removed, as interactive charts for specific sections are no longer used
 import networkx as nx
 import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -36,8 +36,8 @@ STOP_WORDS = set([
     "through", "during", "before", "after", "above", "below", "up", "down", "out", "off",
     "over", "under", "again", "further", "then", "once", "here", "there", "when",
     "where", "why", "how", "all", "any", "both", "each", "few", "more", "most", "other",
-    "some", "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too",
-    "very", "just", "don", "should", "now", "d", "ll", "m", "o", "re", "ve", "y", "ain", "aren",
+    "such", "no", "nor", "not", "only", "own", "same", "so", "than", "too", "very",
+    "just", "don", "should", "now", "d", "ll", "m", "o", "re", "ve", "y", "ain", "aren",
     "couldn", "didn", "doesn", "hadn", "hasn", "haven", "isn", "ma", "mightn", "mustn",
     "needn", "shan", "shouldn", "wasn", "weren", "won", "wouldn", "etc"
 ])
@@ -58,30 +58,22 @@ CES_KEYWORDS = {
     "High Effort": ["difficult", "hard", "complicated", "frustrating", "time-consuming", "struggle", "challenging", "complex"]
 }
 
-# --- Gemini API Configuration (moved outside functions for caching) ---
+# --- Gemini API Configuration ---
 gemini_api_key = None
 try:
-    # First, try to load from Streamlit secrets (for Streamlit Cloud)
+    # Attempt to load from Streamlit secrets (for Streamlit Cloud)
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 except KeyError:
-    # If not in secrets, try from environment variables (for local deployment with .env)
+    # If not in secrets, try from environment variables (for local deployment)
     gemini_api_key = os.getenv("GEMINI_API_KEY")
 
 if not gemini_api_key:
-    st.sidebar.warning("🔐 Gemini API Key not found. Please enter it below or set it in `.streamlit/secrets.toml` or as an environment variable.")
-    gemini_api_key = st.sidebar.text_input("Enter Gemini API Key", type="password", key="gemini_api_key_input")
-    if gemini_api_key:
-        st.session_state["gemini_api_key"] = gemini_api_key # Store in session state if entered manually
-    else:
-        st.info("Please provide a Gemini API Key to enable AI features.")
-
-# Initialize Gemini model if API key is available
-if gemini_api_key:
+    st.warning("🔐 Gemini API Key not found. Please ensure it's set in Streamlit Cloud secrets or as an environment variable (e.g., in a `.env` file for local testing).")
+    st.session_state['gemini_model'] = None # Ensure model is not initialized if key is missing
+else:
+    # Initialize Gemini model if API key is available
     try:
         genai.configure(api_key=gemini_api_key)
-        # Configure the model with adjusted safety settings
-        # BLOCK_NONE for "dangerous_content" is for testing/prototyping.
-        # Use with caution and only if you understand the implications for responsible AI.
         st.session_state['gemini_model'] = genai.GenerativeModel(
             model_name="gemini-pro",
             safety_settings={
@@ -106,8 +98,6 @@ if gemini_api_key:
     except Exception as e:
         st.sidebar.error(f"Error initializing Gemini: '{e}'. Check your API key or network.")
         st.session_state['gemini_model'] = None # Invalidate model if initialization fails
-else:
-    st.session_state['gemini_model'] = None # No API key, no model
 
 # --- Helper Functions ---
 
@@ -349,18 +339,18 @@ def create_html_report(df, selected_text_columns, analyses_results):
             </div>
 
             <div class="section">
-                <h2>4. Response Length Distribution</h2>
-                {analyses_results.get('response_length_plot', '<p>No response length plot.</p>')}
+                <h2>4. Response Length Analysis</h2>
+                {analyses_results.get('response_length_summary', '<p>No response length data.</p>')}
             </div>
 
             <div class="section">
                 <h2>5. Emotion Detection</h2>
-                {analyses_results.get('emotion_analysis_plot', '<p>No emotion analysis plot.</p>')}
+                {analyses_results.get('emotion_analysis_summary', '<p>No emotion analysis data.</p>')}
             </div>
 
             <div class="section">
                 <h2>6. Customer Effort Score (CES) Approximation</h2>
-                {analyses_results.get('ces_analysis_plot', '<p>No CES analysis plot.</p>')}
+                {analyses_results.get('ces_analysis_summary', '<p>No CES analysis data.</p>')}
             </div>
             
             <div class="section">
@@ -399,13 +389,13 @@ def fig_to_base64(fig):
 st.title("📋 Feedback Analyzer Tool")
 st.markdown("Upload your feedback data (CSV or Excel) to get insights into sentiments, key phrases, emotions, and more, powered by Gemini AI.")
 
-uploaded_file = st.sidebar.file_uploader("Upload your CSV or Excel file", type=["csv", "xls", "xlsx"], key="file_uploader") # Added key
+uploaded_file = st.sidebar.file_uploader("Upload your CSV or Excel file", type=["csv", "xls", "xlsx"], key="file_uploader")
 
 if uploaded_file:
     df = load_data(uploaded_file)
     if df is not None:
         st.sidebar.success("File uploaded successfully!")
-        st.sidebar.dataframe(df.head(), use_container_width=True, key="sidebar_df_head") # Added key
+        st.sidebar.dataframe(df.head(), use_container_width=True, key="sidebar_df_head")
 
         text_columns = [col for col in df.columns if df[col].dtype == 'object']
         if not text_columns:
@@ -416,7 +406,7 @@ if uploaded_file:
             "Select text columns for analysis:",
             options=text_columns,
             default=text_columns[0] if text_columns else [],
-            key="column_multiselect" # Added key
+            key="column_multiselect"
         )
 
         if not selected_text_columns:
@@ -424,7 +414,6 @@ if uploaded_file:
             st.stop()
 
         # Combine selected text columns into a single series for overall analysis
-        # Fill NaN values with empty strings before joining
         combined_feedback_series = df[selected_text_columns].astype(str).fillna('').agg(' '.join, axis=1)
         full_text_for_analysis = " ".join(combined_feedback_series.dropna().tolist())
 
@@ -432,9 +421,9 @@ if uploaded_file:
         st.info("Results below are based on the combined text from selected columns.")
 
         # --- Display Raw Data (Optional) ---
-        if st.checkbox("Show Raw Data Sample", key="show_raw_data_checkbox"): # Added key
+        if st.checkbox("Show Raw Data Sample", key="show_raw_data_checkbox"):
             st.subheader("Raw Data Sample")
-            st.dataframe(df.head(10), use_container_width=True, key="raw_data_df") # Added key
+            st.dataframe(df.head(10), use_container_width=True, key="raw_data_df")
 
         # --- Sentiment Analysis ---
         st.subheader("Sentiment Analysis")
@@ -448,6 +437,7 @@ if uploaded_file:
             sentiment_counts = overall_sentiments.value_counts(normalize=True) * 100
             
             if not sentiment_counts.empty:
+                # Retained Plotly chart for Sentiment as it was not explicitly requested to be removed and is a core visualization
                 fig_sentiment = px.pie(
                     values=sentiment_counts.values,
                     names=sentiment_counts.index,
@@ -455,10 +445,10 @@ if uploaded_file:
                     hole=0.4
                 )
                 fig_sentiment.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_sentiment, use_container_width=True, key="overall_sentiment_pie") # Added key
+                st.plotly_chart(fig_sentiment, use_container_width=True, key="overall_sentiment_pie")
                 
                 st.write("Sentiment Breakdown:")
-                st.dataframe(sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}), use_container_width=True, key="overall_sentiment_df") # Added key
+                st.dataframe(sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}), use_container_width=True, key="overall_sentiment_df")
             else:
                 st.info("Not enough data to perform sentiment analysis.")
 
@@ -469,68 +459,56 @@ if uploaded_file:
         with col1:
             st.markdown("### Top Keywords (Unigrams)")
             top_keywords = get_top_n_grams(combined_feedback_series, n=1, top_n=15)
-            st.dataframe(top_keywords, use_container_width=True, key="top_keywords_df") # Added key
+            st.dataframe(top_keywords, use_container_width=True, key="top_keywords_df")
 
         with col2:
             st.markdown("### Top Phrases (Bigrams)")
             top_bigrams = get_top_n_grams(combined_feedback_series, n=2, top_n=10)
-            st.dataframe(top_bigrams, use_container_width=True, key="top_bigrams_df") # Added key
+            st.dataframe(top_bigrams, use_container_width=True, key="top_bigrams_df")
 
         with col3:
             st.markdown("### Top Phrases (Trigrams)")
             top_trigrams = get_top_n_grams(combined_feedback_series, n=3, top_n=5)
-            st.dataframe(top_trigrams, use_container_width=True, key="top_trigrams_df") # Added key
+            st.dataframe(top_trigrams, use_container_width=True, key="top_trigrams_df")
 
-        # --- Response Length Distribution ---
-        st.subheader("Response Length Distribution")
+        # --- Response Length Analysis (Direct Representation) ---
+        st.subheader("Response Length Analysis")
         response_lengths = analyze_response_length(combined_feedback_series)
-        if not response_lengths.empty and response_lengths.max() > 0:
-            fig_length = px.histogram(response_lengths, nbins=30, title="Distribution of Response Lengths (Word Count)")
-            fig_length.update_xaxes(title_text="Word Count")
-            fig_length.update_yaxes(title_text="Number of Responses")
-            st.plotly_chart(fig_length, use_container_width=True, key="response_length_hist") # Added key
-            st.write(f"Average response length: {response_lengths.mean():.2f} words")
-            st.write(f"Median response length: {response_lengths.median():.0f} words")
+        if not response_lengths.empty:
+            st.write(f"**Average response length:** {response_lengths.mean():.2f} words")
+            st.write(f"**Median response length:** {response_lengths.median():.0f} words")
+            st.write(f"**Minimum response length:** {response_lengths.min():.0f} words")
+            st.write(f"**Maximum response length:** {response_lengths.max():.0f} words")
+            st.markdown("---")
+            st.markdown("##### Response Length Summary Statistics")
+            st.dataframe(response_lengths.describe().to_frame().T, use_container_width=True, key="response_length_summary_df")
         else:
             st.info("Not enough data to analyze response lengths.")
 
 
-        # --- Emotion Detection ---
+        # --- Emotion Detection (Direct Representation) ---
         st.subheader("Emotion Detection (Keyword-Based)")
         with st.spinner("Detecting emotions..."):
             emotion_percentages = detect_emotions(combined_feedback_series)
             emotion_df = pd.DataFrame(emotion_percentages.items(), columns=['Emotion', 'Percentage']).sort_values(by='Percentage', ascending=False)
             
             if not emotion_df.empty and emotion_df['Percentage'].sum() > 0:
-                fig_emotion = px.bar(
-                    emotion_df,
-                    x='Emotion',
-                    y='Percentage',
-                    title="Detected Emotions in Feedback",
-                    color='Percentage',
-                    color_continuous_scale=px.colors.sequential.Teal
-                )
-                st.plotly_chart(fig_emotion, use_container_width=True, key="emotion_bar_chart") # Added key
-                st.dataframe(emotion_df, use_container_width=True, key="emotion_df") # Added key
+                st.write("Percentage of responses expressing each emotion:")
+                st.dataframe(emotion_df, use_container_width=True, key="emotion_df")
+                st.info("Note: A response can express multiple emotions if it contains keywords from different categories.")
             else:
                 st.info("No specific emotion keywords detected in the feedback.")
 
-        # --- Customer Effort Score (CES) Approximation ---
+        # --- Customer Effort Score (CES) Approximation (Direct Representation) ---
         st.subheader("Customer Effort Score (CES) Approximation")
         with st.spinner("Approximating CES..."):
             ces_scores = calculate_ces(combined_feedback_series)
             ces_counts = pd.Series(ces_scores).value_counts(normalize=True) * 100
             
             if not ces_counts.empty and ces_counts.sum() > 0:
-                fig_ces = px.pie(
-                    values=ces_counts.values,
-                    names=ces_counts.index,
-                    title="Approximated Customer Effort Score",
-                    hole=0.4
-                )
-                fig_ces.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_ces, use_container_width=True, key="ces_pie_chart") # Added key
-                st.dataframe(ces_counts.reset_index().rename(columns={'index': 'Effort Level', 0: 'Percentage'}), use_container_width=True, key="ces_df") # Added key
+                st.write("Distribution of approximated Customer Effort Levels:")
+                st.dataframe(ces_counts.reset_index().rename(columns={'index': 'Effort Level', 0: 'Percentage'}), use_container_width=True, key="ces_df")
+                st.info("Note: CES is approximated based on the presence of predefined keywords related to effort.")
             else:
                 st.info("Not enough data to approximate Customer Effort Score.")
 
@@ -541,24 +519,24 @@ if uploaded_file:
             text_for_wordcloud = " ".join(combined_feedback_series.dropna().tolist())
             wordcloud_fig = generate_wordcloud(text_for_wordcloud)
             if wordcloud_fig:
-                st.pyplot(wordcloud_fig, key="wordcloud_plot") # Added key
+                st.pyplot(wordcloud_fig, key="wordcloud_plot")
             else:
                 st.info("Not enough relevant text to generate a word cloud.")
 
         # --- Word Co-occurrence Network ---
         st.subheader("Word Co-occurrence Network")
-        min_cooccurrence = st.slider("Minimum co-occurrence for graph:", 1, 10, 2, key="min_cooccurrence_slider") # Added key
+        min_cooccurrence = st.slider("Minimum co-occurrence for graph:", 1, 10, 2, key="min_cooccurrence_slider")
         with st.spinner("Generating co-occurrence graph..."):
             co_occurrence_fig, co_occurrence_message = generate_co_occurrence_graph(combined_feedback_series, min_cooccurrence)
             if co_occurrence_fig:
-                st.pyplot(co_occurrence_fig, key="cooccurrence_plot") # Added key
+                st.pyplot(co_occurrence_fig, key="cooccurrence_plot")
             else:
                 st.info(co_occurrence_message if co_occurrence_message else "No co-occurrences found to display a graph.")
 
         # --- Gemini AI Summarization ---
         st.subheader("Gemini AI Summarization")
-        if st.session_state['gemini_model']:
-            if st.button("Generate Overall AI Summary", key="generate_overall_ai_summary_btn"): # Added key
+        if st.session_state.get('gemini_model'): # Check if model was successfully initialized
+            if st.button("Generate Overall AI Summary", key="generate_overall_ai_summary_btn"):
                 with st.spinner("Asking Gemini to summarize overall feedback..."):
                     overall_summary = get_gemini_summary(full_text_for_analysis, st.session_state['gemini_model'])
                     st.markdown("#### Overall Summary by Gemini AI")
@@ -572,7 +550,7 @@ if uploaded_file:
                 question_text_filtered = [text for text in question_text if text.strip()]
                 if question_text_filtered:
                     question_feedback_combined = "\n".join(question_text_filtered)
-                    with st.expander(f"Generate Summary for: {col}", key=f"expander_{col}"): # Added key
+                    with st.expander(f"Generate Summary for: {col}", key=f"expander_{col}"):
                         if st.button(f"Summarize '{col}'", key=f"summarize_btn_{col}"):
                             with st.spinner(f"Asking Gemini to summarize '{col}'..."):
                                 question_summary = get_gemini_summary(question_feedback_combined, st.session_state['gemini_model'])
@@ -581,13 +559,13 @@ if uploaded_file:
                 else:
                     st.info(f"No valid text responses in column '{col}' to summarize.")
         else:
-            st.warning("Gemini AI features are disabled. Please provide an API key.")
+            st.warning("Gemini AI features are disabled because the API key was not found or the connection failed. Please ensure your API key is correctly configured in Streamlit Cloud secrets or environment variables.")
 
         # --- Generate and Download HTML Report ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("Download Report")
 
-        if st.sidebar.button("Generate HTML Report", key="generate_html_report_btn"): # Added key
+        if st.sidebar.button("Generate HTML Report", key="generate_html_report_btn"):
             with st.spinner("Generating comprehensive report..."):
                 analyses_for_report = {}
 
@@ -595,6 +573,7 @@ if uploaded_file:
                 sentiment_counts_html = ""
                 if not sentiment_counts.empty:
                     sentiment_counts_html = sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}).to_html()
+                    # Keep sentiment chart in report as it's a useful visualization
                     fig_sentiment_report = px.pie(values=sentiment_counts.values, names=sentiment_counts.index, title="Overall Sentiment Distribution", hole=0.4)
                     fig_sentiment_report.update_traces(textposition='inside', textinfo='percent+label')
                     analyses_for_report['sentiment_analysis'] = f"<h3>Overall Sentiment Distribution</h3>{fig_to_base64(fig_sentiment_report)}<p>Sentiment Breakdown:</p>{sentiment_counts_html}"
@@ -606,29 +585,35 @@ if uploaded_file:
                 analyses_for_report['top_bigrams_html'] = top_bigrams.to_html() if not top_bigrams.empty else '<p>No top bigrams data.</p>'
                 analyses_for_report['top_trigrams_html'] = top_trigrams.to_html() if not top_trigrams.empty else '<p>No top trigrams data.</p>'
 
-                # 3. Response Length
-                if not response_lengths.empty and response_lengths.max() > 0:
-                    fig_length_report = px.histogram(response_lengths, nbins=30, title="Distribution of Response Lengths (Word Count)")
-                    fig_length_report.update_xaxes(title_text="Word Count")
-                    fig_length_report.update_yaxes(title_text="Number of Responses")
-                    analyses_for_report['response_length_plot'] = f"<h3>Response Length Distribution</h3>{fig_to_base64(fig_length_report)}<p>Average: {response_lengths.mean():.2f} words, Median: {response_lengths.median():.0f} words</p>"
+                # 3. Response Length (Report version)
+                if not response_lengths.empty:
+                    length_stats_html = response_lengths.describe().to_frame().T.to_html()
+                    analyses_for_report['response_length_summary'] = f"<h3>Response Length Analysis</h3>" \
+                                                                       f"<p><strong>Average:</strong> {response_lengths.mean():.2f} words</p>" \
+                                                                       f"<p><strong>Median:</strong> {response_lengths.median():.0f} words</p>" \
+                                                                       f"<p><strong>Minimum:</strong> {response_lengths.min():.0f} words</p>" \
+                                                                       f"<p><strong>Maximum:</strong> {response_lengths.max():.0f} words</p>" \
+                                                                       f"<h4>Summary Statistics</h4>{length_stats_html}"
                 else:
-                    analyses_for_report['response_length_plot'] = '<p>No response length plot.</p>'
+                    analyses_for_report['response_length_summary'] = '<p>No response length data.</p>'
 
-                # 4. Emotion Detection
+                # 4. Emotion Detection (Report version)
                 if not emotion_df.empty and emotion_df['Percentage'].sum() > 0:
-                    fig_emotion_report = px.bar(emotion_df, x='Emotion', y='Percentage', title="Detected Emotions in Feedback", color='Percentage', color_continuous_scale=px.colors.sequential.Teal)
-                    analyses_for_report['emotion_analysis_plot'] = f"<h3>Emotion Detection (Keyword-Based)</h3>{fig_to_base64(fig_emotion_report)}{emotion_df.to_html()}"
+                    analyses_for_report['emotion_analysis_summary'] = f"<h3>Emotion Detection (Keyword-Based)</h3>" \
+                                                                       f"<h4>Percentage of responses expressing each emotion:</h4>" \
+                                                                       f"{emotion_df.to_html()}" \
+                                                                       f"<p><i>Note: A response can express multiple emotions if it contains keywords from different categories.</i></p>"
                 else:
-                    analyses_for_report['emotion_analysis_plot'] = '<p>No emotion analysis plot.</p>'
+                    analyses_for_report['emotion_analysis_summary'] = '<p>No emotion analysis data.</p>'
 
-                # 5. CES Approximation
+                # 5. CES Approximation (Report version)
                 if not ces_counts.empty and ces_counts.sum() > 0:
-                    fig_ces_report = px.pie(values=ces_counts.values, names=ces_counts.index, title="Approximated Customer Effort Score", hole=0.4)
-                    fig_ces_report.update_traces(textposition='inside', textinfo='percent+label')
-                    analyses_for_report['ces_analysis_plot'] = f"<h3>Customer Effort Score (CES) Approximation</h3>{fig_to_base64(fig_ces_report)}{ces_counts.reset_index().rename(columns={'index': 'Effort Level', 0: 'Percentage'}).to_html()}"
+                    analyses_for_report['ces_analysis_summary'] = f"<h3>Customer Effort Score (CES) Approximation</h3>" \
+                                                                   f"<h4>Distribution of approximated Customer Effort Levels:</h4>" \
+                                                                   f"{ces_counts.reset_index().rename(columns={'index': 'Effort Level', 0: 'Percentage'}).to_html()}" \
+                                                                   f"<p><i>Note: CES is approximated based on the presence of predefined keywords related to effort.</i></p>"
                 else:
-                    analyses_for_report['ces_analysis_plot'] = '<p>No CES analysis plot.</p>'
+                    analyses_for_report['ces_analysis_summary'] = '<p>No CES analysis data.</p>'
 
                 # 6. Word Cloud
                 if wordcloud_fig:
@@ -645,11 +630,11 @@ if uploaded_file:
                 # 8. Gemini AI Summaries for Report
                 overall_summary_report = ""
                 # Check if overall summary was actually generated and stored in session state
-                if st.session_state['gemini_model'] and 'overall_gemini_summary_generated' in st.session_state and st.session_state['overall_gemini_summary_generated']:
+                if st.session_state.get('gemini_model') and 'overall_gemini_summary_generated' in st.session_state and st.session_state['overall_gemini_summary_generated']:
                      overall_summary_report = f"<h4>Overall Feedback Summary</h4><p>{st.session_state['overall_gemini_summary_generated']}</p>"
 
                 question_summaries_report = ""
-                if st.session_state['gemini_model']:
+                if st.session_state.get('gemini_model'):
                     for col in selected_text_columns:
                         # Check if per-question summary was actually generated and stored in session state
                         if f'gemini_summary_{col}' in st.session_state and st.session_state[f'gemini_summary_{col}']:
