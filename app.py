@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
-# import plotly.express as px # Removed, as interactive charts for specific sections are no longer used
+import plotly.express as px # Keep this import if you want to retain the sentiment chart
 import networkx as nx
 import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import TfidfVectorizer
-from wordcloud import WordCloud # Crucial fix for NameError
+from wordcloud import WordCloud
 import os
 import io
 from datetime import datetime
@@ -62,6 +62,7 @@ CES_KEYWORDS = {
 gemini_api_key = None
 try:
     # Attempt to load from Streamlit secrets (for Streamlit Cloud)
+    # Corrected: Expects GEMINI_API_KEY directly, not under [gemini]
     gemini_api_key = st.secrets["GEMINI_API_KEY"]
 except KeyError:
     # If not in secrets, try from environment variables (for local deployment)
@@ -445,7 +446,8 @@ if uploaded_file:
                     hole=0.4
                 )
                 fig_sentiment.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_sentiment, use_container_width=True, key="overall_sentiment_pie")
+                # ADDED UNIQUE KEY HERE
+                st.plotly_chart(fig_sentiment, use_container_width=True, key="overall_sentiment_pie_chart") 
                 
                 st.write("Sentiment Breakdown:")
                 st.dataframe(sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}), use_container_width=True, key="overall_sentiment_df")
