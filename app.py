@@ -88,11 +88,10 @@ st.markdown("""
     <style>
         .block-container { padding-top: 2rem; padding-bottom: 2rem; }
         .stDataFrame th, .stDataFrame td { text-align: left !important; }
-        .stTabs [data-baseweb="tab-list"] { flex-wrap: wrap; }
-        .stTabs [role="tab"] { font-size: 1rem; padding: 0.5rem 1rem; }
+        .st-expander { background-color: #f9f9f9; border-left: 5px solid #4A90E2; }
     </style>
 """, unsafe_allow_html=True)
-st.markdown("<h1 style='text-align: center; color: #4A90E2;'>📋 Feedback Analyzer Tool</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: #333;'>📋 Feedback Analyzer Tool</h1>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # Sidebar setup
@@ -129,10 +128,9 @@ if uploaded and gemini:
         selected = st.multiselect("Choose Questions", text_cols, default=text_cols[:min(len(text_cols), 2)])
 
         summary_data = []
-        tab_list = st.tabs([f"🔍 {col}" for col in selected])
 
         for i, col in enumerate(selected):
-            with tab_list[i]:
+            with st.expander(f"🔍 Analysis: **{col}**", expanded=True):
                 responses = df[col].astype(str).dropna().tolist()
                 meaningful_responses = [r for r in responses if len(r.strip()) > 5 and not r.isnumeric()]
                 sentiments, kws = [], []
@@ -152,47 +150,48 @@ if uploaded and gemini:
                     gemini_on = st.checkbox("🧠 Gemini Summary", value=True, key=f"gem_{col}")
                     wordcloud_on = st.checkbox("☁️ Word Cloud", value=True, key=f"wc_{col}")
 
-                st.markdown("---")
-                lcol, rcol = st.columns(2)
-                with lcol:
-                    if pie_chart_on and sentiments:
-                        pie_df = pd.DataFrame(Counter(sentiments).items(), columns=["Sentiment", "Count"])
-                        fig = px.pie(pie_df, names="Sentiment", values="Count")
-                        st.plotly_chart(fig, use_container_width=True)
+                if pie_chart_on and sentiments:
+                    st.markdown("### 📊 Sentiment Breakdown")
+                    pie_df = pd.DataFrame(Counter(sentiments).items(), columns=["Sentiment", "Count"])
+                    fig = px.pie(pie_df, names="Sentiment", values="Count")
+                    st.plotly_chart(fig, use_container_width=True)
 
-                    if keywords_on:
-                        if kws:
-                            st.markdown("\n".join([f"- **{kw}** (Score: {score:.2f})" for kw, score in kws]))
-                        else:
-                            st.info("No significant keywords found.")
+                if keywords_on:
+                    st.markdown("### 🔤 Top Keywords")
+                    if kws:
+                        st.markdown("\n".join([f"- **{kw}** (Score: {score:.2f})" for kw, score in kws]))
+                    else:
+                        st.info("No significant keywords found.")
 
-                    if frequent_on:
-                        freq_df = pd.Series(meaningful_responses).value_counts().reset_index()
-                        freq_df.columns = ["Response", "Count"]
-                        freq_df = freq_df[freq_df["Response"].apply(lambda x: len(x.split()) >= 2 and len(x) > 10)]
-                        if not freq_df.empty:
-                            st.dataframe(freq_df.head(10), use_container_width=True)
-                        else:
-                            st.info("No frequent multi-word responses.")
+                if frequent_on:
+                    st.markdown("### 📋 Frequent Responses")
+                    freq_df = pd.Series(meaningful_responses).value_counts().reset_index()
+                    freq_df.columns = ["Response", "Count"]
+                    freq_df = freq_df[freq_df["Response"].apply(lambda x: len(x.split()) >= 2 and len(x) > 10)]
+                    if not freq_df.empty:
+                        st.dataframe(freq_df.head(10), use_container_width=True)
+                    else:
+                        st.info("No frequent multi-word responses.")
 
-                with rcol:
-                    if wordcloud_on and meaningful_responses:
-                        text_wc = " ".join(meaningful_responses)
-                        wc_img = generate_wordcloud(text_wc)
-                        if wc_img:
-                            fig_wc, ax_wc = plt.subplots(figsize=(10, 5))
-                            ax_wc.imshow(wc_img, interpolation='bilinear')
-                            ax_wc.axis('off')
-                            st.pyplot(fig_wc)
+                if wordcloud_on and meaningful_responses:
+                    st.markdown("### ☁️ Word Cloud")
+                    text_wc = " ".join(meaningful_responses)
+                    wc_img = generate_wordcloud(text_wc)
+                    if wc_img:
+                        fig_wc, ax_wc = plt.subplots(figsize=(10, 5))
+                        ax_wc.imshow(wc_img, interpolation='bilinear')
+                        ax_wc.axis('off')
+                        st.pyplot(fig_wc)
 
-                    if gemini_on and meaningful_responses:
-                        try:
-                            sample = "\n".join(pd.Series(meaningful_responses).sample(min(25, len(meaningful_responses)), random_state=42))
-                            prompt = f"""Summarize the main points, tone, and suggestions for the question '{col}'.\n\nFeedback:\n{sample}"""
-                            reply = gemini.generate_content(prompt)
-                            st.info(reply.text.strip())
-                        except Exception as e:
-                            st.error(f"Gemini Error: {e}")
+                if gemini_on and meaningful_responses:
+                    st.markdown("### 🧠 Gemini Summary")
+                    try:
+                        sample = "\n".join(pd.Series(meaningful_responses).sample(min(25, len(meaningful_responses)), random_state=42))
+                        prompt = f"""Summarize the main points, tone, and suggestions for the question '{col}'.\n\nFeedback:\n{sample}"""
+                        reply = gemini.generate_content(prompt)
+                        st.info(reply.text.strip())
+                    except Exception as e:
+                        st.error(f"Gemini Error: {e}")
 
                 summary_data.append({
                     "Question": col,
