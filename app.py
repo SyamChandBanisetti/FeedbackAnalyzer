@@ -13,6 +13,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import base64 # For embedding images in HTML
 from io import BytesIO # For saving plot images to memory
+from wordcloud import WordCloud # Add this line
 
 # --- NLTK Replacement: Simple Tokenization and Stop Words ---
 
