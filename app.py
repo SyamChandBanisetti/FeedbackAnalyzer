@@ -73,9 +73,10 @@ if not gemini_api_key:
 else:
     # Initialize Gemini model if API key is available
     try:
+        # Changed model_name to gemini-1.5-flash
         genai.configure(api_key=gemini_api_key)
         st.session_state['gemini_model'] = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
+            model_name="gemini-2.0-flash", # Updated model name here
             safety_settings={
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -98,7 +99,6 @@ else:
     except Exception as e:
         st.sidebar.error(f"Error initializing Gemini: '{e}'. Check your API key or network.")
         st.session_state['gemini_model'] = None # Invalidate model if initialization fails
-        
 
 # --- Helper Functions ---
 
@@ -565,7 +565,7 @@ if uploaded_file:
             with st.spinner("Generating word cloud..."):
                 text_for_wordcloud = " ".join(combined_feedback_series.dropna().tolist())
                 wordcloud_fig = generate_wordcloud(text_for_wordcloud)
-                if wordcloud_fig:
+                if wordcloud_fig: # Only call st.pyplot if a figure was actually generated
                     st.pyplot(wordcloud_fig, key="wordcloud_plot")
                 else:
                     st.info("Not enough relevant text to generate a word cloud.")
@@ -629,6 +629,7 @@ if uploaded_file:
                 }
 
                 # 1. Sentiment Analysis
+                # Check the checkbox state AND if the data for this section was actually processed
                 if analysis_selections['sentiment_analysis'] and 'sentiment_counts' in locals() and not sentiment_counts.empty:
                     sentiment_counts_html = sentiment_counts.reset_index().rename(columns={'index': 'Sentiment', 0: 'Percentage'}).to_html()
                     fig_sentiment_report = px.pie(values=sentiment_counts.values, names=sentiment_counts.index, title="Overall Sentiment Distribution", hole=0.4)
@@ -639,8 +640,7 @@ if uploaded_file:
 
                 # 2. Key Phrase Analysis
                 if analysis_selections['key_phrase_analysis']:
-                    # Ensure top_keywords, top_bigrams, top_trigrams are available or re-run them for report if needed
-                    # (assuming they were already generated if checkbox was true)
+                    # Re-run or ensure these are available for the report if the checkbox was true
                     top_keywords_report = get_top_n_grams(combined_feedback_series, n=1, top_n=15)
                     top_bigrams_report = get_top_n_grams(combined_feedback_series, n=2, top_n=10)
                     top_trigrams_report = get_top_n_grams(combined_feedback_series, n=3, top_n=5)
