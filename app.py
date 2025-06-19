@@ -24,7 +24,7 @@ def simple_tokenize(text):
 
 def init_gemini(api_key):
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-2.0-flash")
 
 def preprocess_and_save(file):
     try:
