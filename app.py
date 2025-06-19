@@ -98,6 +98,7 @@ else:
     except Exception as e:
         st.sidebar.error(f"Error initializing Gemini: '{e}'. Check your API key or network.")
         st.session_state['gemini_model'] = None # Invalidate model if initialization fails
+        
 
 # --- Helper Functions ---
 
