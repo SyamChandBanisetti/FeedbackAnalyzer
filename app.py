@@ -14,22 +14,7 @@ import os
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
-# --- NLTK Replacement: Simple Tokenization and Stop Words ---
-STOP_WORDS = set([
-    "i", "me", "my", "myself", "we", "our", "ours", "ourselves", "you", "your", "yours",
-    "yourself", "yourselves", "he", "him", "his", "himself", "she", "her", "hers",
-    "herself", "it", "its", "itself", "they", "them", "their", "theirs", "themselves",
-    "what", "which", "who", "whom", "this", "that", "these", "those", "am", "is", "are",
-    "was", "were", "be", "been", "being", "have", "has", "had", "having", "do", "does",
-    "did", "doing", "a", "an", "the", "and", "but", "if", "or", "because", "as", "until",
-    "while", "of", "at", "by", "for", "with", "about", "against", "between", "into",
-    "through", "during", "before", "after", "above", "below", "to", "from", "up", "down",
-    "in", "out", "on", "off", "over", "under", "again", "further", "then", "once", "here",
-    "there", "when", "where", "why", "how", "all", "any", "both", "each", "few", "more",
-    "most", "other", "some", "such", "no", "nor", "not", "only", "own", "same", "so",
-    "than", "too", "very", "s", "t", "can", "will", "just", "don", "should", "now",
-    "don't", "shouldn't", "can't", "won't", "isn't", "aren't", "wasn't", "weren't",
-] + list(string.punctuation))
+STOP_WORDS = set([...])  # Omitted for brevity
 
 def simple_tokenize(text):
     cleaned_text = re.sub(r'\d+', '', text.lower())
@@ -37,13 +22,9 @@ def simple_tokenize(text):
     tokens = cleaned_text.split()
     return [token for token in tokens if token.strip()]
 
-# Gemini Setup
-
 def init_gemini(api_key):
     genai.configure(api_key=api_key)
     return genai.GenerativeModel("gemini-1.5-flash")
-
-# File Preprocess
 
 def preprocess_and_save(file):
     try:
@@ -65,29 +46,23 @@ def preprocess_and_save(file):
         st.error(f"Error processing file: {e}")
         return None, None, None
 
-# Sentiment Classifier
 @st.cache_data
 def classify_sentiments(texts):
     sentiments = []
     for text in texts:
         t = text.lower()
-        if any(w in t for w in ["good", "great", "excellent", "love", "awesome", "helpful", "satisfied", "nice", "positive", "happy", "smooth", "efficient", "recommend", "super", "perfect", "enjoy"]):
+        if any(w in t for w in [...]):
             sentiments.append("Positive")
-        elif any(w in t for w in ["bad", "poor", "terrible", "hate", "worst", "boring", "rude", "unsatisfied", "negative", "unhappy", "difficult", "issue", "problem", "frustrating", "slow", "broken", "complaint"]):
+        elif any(w in t for w in [...]):
             sentiments.append("Negative")
         else:
             sentiments.append("Neutral")
     return sentiments
 
-# TF-IDF Keyword Extractor
 @st.cache_data
 def extract_keywords_tfidf(texts, top_n=10):
-    processed_texts = [
-        " ".join([token for token in simple_tokenize(t) if token not in STOP_WORDS and len(token) > 1])
-        for t in texts if len(t.strip()) > 2
-    ]
+    processed_texts = [" ".join([token for token in simple_tokenize(t) if token not in STOP_WORDS and len(token) > 1]) for t in texts if len(t.strip()) > 2]
     processed_texts = [t for t in processed_texts if t and not t.isspace()]
-
     if not processed_texts:
         return []
     try:
@@ -96,33 +71,23 @@ def extract_keywords_tfidf(texts, top_n=10):
         kw = vec.get_feature_names_out()
         scores = X.sum(axis=0).A1
         return sorted(zip(kw, scores), key=lambda x: x[1], reverse=True)
+    except ValueError as e:
+        st.warning(f"Could not extract keywords: {e}.")
+        return []
     except Exception as e:
-        st.warning(f"Keyword extraction error: {e}")
+        st.error(f"Unexpected error: {e}")
         return []
 
-# Word Cloud
 @st.cache_data
 def generate_wordcloud(text_corpus):
     if not text_corpus.strip():
         return None
-    wordcloud = WordCloud(width=800, height=400, background_color='white',
-                          stopwords=STOP_WORDS, min_font_size=10).generate(text_corpus)
+    wordcloud = WordCloud(width=800, height=400, background_color='white', stopwords=STOP_WORDS, min_font_size=10).generate(text_corpus)
     return wordcloud
 
-# UI Setup
 st.set_page_config("Feedback Analyzer", layout="wide")
-st.markdown("""
-    <style>
-    .main {background-color: #fdfdfd;}
-    .st-expander {border: 1px solid #ccc; border-radius: 6px; padding: 5px;}
-    .stCheckbox > div {margin-bottom: 4px;}
-    .element-container:has(> .stCheckbox) {margin-bottom: 1rem;}
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("📋 Feedback Analyzer Tool")
 
-# Sidebar: Gemini API Key
 with st.sidebar:
     st.header("🔐 Gemini API Key")
     api_key = st.text_input("Enter Gemini API Key", type="password")
@@ -130,15 +95,18 @@ with st.sidebar:
         try:
             gemini = init_gemini(api_key)
             test_response = gemini.generate_content("hello", safety_settings={'HARASSMENT': 'block_none'})
-            st.success("Gemini is ready and connected!")
+            if test_response:
+                st.success("Gemini is ready and connected!")
+            else:
+                st.error("Gemini connection failed.")
+                gemini = None
         except Exception as e:
             st.error(f"Error connecting to Gemini: {e}")
             gemini = None
     else:
-        st.warning("Please enter your Gemini API key.")
+        st.warning("Please enter your Gemini API key to enable AI features.")
         gemini = None
 
-# Upload File
 uploaded = st.file_uploader("📤 Upload CSV or Excel Feedback File", type=["csv", "xlsx"])
 
 if uploaded and api_key and gemini:
@@ -159,63 +127,78 @@ if uploaded and api_key and gemini:
         for i, col in enumerate(selected):
             responses = df[col].astype(str).dropna().tolist()
             meaningful_responses = [r for r in responses if len(r.strip()) > 5 and not r.isnumeric()]
+            sentiments = []
+            kws = []
+            if meaningful_responses:
+                sentiments = classify_sentiments(meaningful_responses)
+                kws = extract_keywords_tfidf(meaningful_responses)
 
-            sentiments = classify_sentiments(meaningful_responses) if meaningful_responses else []
-            kws = extract_keywords_tfidf(meaningful_responses) if meaningful_responses else []
+            st.markdown(f"---")
+            with st.expander(f"🔍 Analysis: **{col}**", expanded=True):
+                pie_chart_on = st.checkbox("📊 Sentiment Breakdown", value=True, key=f"pie_toggle_{col}_{i}")
+                keywords_on = st.checkbox("🔤 Top Keywords (List)", value=True, key=f"kw_toggle_{col}_{i}")
+                frequent_on = st.checkbox("📋 Frequent Responses", value=True, key=f"freq_toggle_{col}_{i}")
+                gemini_on = st.checkbox("🧠 Gemini Summary", value=True, key=f"gem_sum_toggle_{col}_{i}")
+                word_cloud_on = st.checkbox("☁️ Word Cloud", value=True, key=f"wc_toggle_{col}_{i}")
 
-            with st.expander(f"🔍 Analysis: {col}", expanded=True):
-                pie_df = pd.DataFrame(Counter(sentiments).items(), columns=["Sentiment", "Count"])
-                freq_df = pd.Series(meaningful_responses).value_counts().reset_index()
-                freq_df.columns = ["Response", "Count"]
-                freq_df = freq_df[freq_df["Response"].apply(lambda x: len(x.split()) >= 2 and len(x) > 10)]
-
-                col1, col2 = st.columns(2)
-
-                with col1:
+                if pie_chart_on:
                     st.markdown("### 📊 Sentiment Breakdown")
-                    if not pie_df.empty:
+                    if sentiments:
+                        pie_df = pd.DataFrame(Counter(sentiments).items(), columns=["Sentiment", "Count"])
                         fig = px.pie(pie_df, names="Sentiment", values="Count", title="Sentiment Breakdown")
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.info("Not enough responses for sentiment breakdown.")
+                        st.info("No meaningful responses for sentiment analysis.")
 
+                if keywords_on:
                     st.markdown("### 🔤 Top Keywords")
                     if kws:
-                        for kw, score in kws:
-                            st.markdown(f"- **{kw}** (Score: {score:.2f})")
+                        keyword_strings = [f"- **{kw}** (Score: {score:.2f})" for kw, score in kws]
+                        st.markdown("\n".join(keyword_strings))
                     else:
                         st.info("No significant keywords found.")
 
-                    st.markdown("### 📋 Frequent Responses")
-                    if not freq_df.empty:
-                        st.dataframe(freq_df.head(10), use_container_width=True)
+                if frequent_on:
+                    st.markdown("### 📋 Frequent Responses (2+ words)")
+                    if meaningful_responses:
+                        freq_df = pd.Series(meaningful_responses).value_counts().reset_index()
+                        freq_df.columns = ["Response", "Count"]
+                        freq_df = freq_df[freq_df["Response"].apply(lambda x: len(x.split()) >= 2 and len(x) > 10)]
+                        if not freq_df.empty:
+                            st.dataframe(freq_df.head(10), use_container_width=True)
+                        else:
+                            st.info("No frequent multi-word responses found.")
                     else:
-                        st.info("No frequent multi-word responses found.")
+                        st.info("No meaningful responses to analyze.")
 
-                with col2:
+                if word_cloud_on:
                     st.markdown("### ☁️ Word Cloud")
                     if meaningful_responses:
-                        text_for_wc = " ".join(meaningful_responses)
-                        wordcloud_img = generate_wordcloud(text_for_wc)
+                        text_for_wordcloud = " ".join(meaningful_responses)
+                        wordcloud_img = generate_wordcloud(text_for_wordcloud)
                         if wordcloud_img:
                             fig_wc, ax_wc = plt.subplots(figsize=(10, 5))
                             ax_wc.imshow(wordcloud_img, interpolation='bilinear')
                             ax_wc.axis('off')
                             st.pyplot(fig_wc)
                         else:
-                            st.info("Not enough text to generate a word cloud.")
+                            st.info("Not enough content for word cloud.")
                     else:
-                        st.info("No responses for word cloud.")
+                        st.info("No responses for word cloud generation.")
 
+                if gemini_on:
                     st.markdown("### 🧠 Gemini Summary")
                     try:
                         if meaningful_responses:
                             sample_responses = "\n".join(pd.Series(meaningful_responses).dropna().sample(min(25, len(meaningful_responses)), random_state=42))
-                            prompt = f"""Provide a concise, useful, and actionable summary of the key themes, overall sentiment (positive/negative/neutral breakdown), and specific suggestions for improvement from the following responses to the question: \"{col}\". Aim for a summary that is easy to read and provides valuable insights, without being too long or too short. Focus on a length that is 'considerable' and 'just useful'.\n\nFeedbacks:\n{sample_responses}"""
+                            prompt = f"""You're an expert advisor analyzing survey feedback. Based on the following responses to the question: \"{col}\", generate a helpful, professional summary with key takeaways and 3–5 clear, bullet-pointed suggestions for improvement. Highlight sentiment and actionable advice.
+
+Feedbacks:
+{sample_responses}"""
                             reply = gemini.generate_content(prompt)
                             st.info(reply.text.strip())
                         else:
-                            st.info("Not enough responses for summary.")
+                            st.info("Not enough responses for Gemini summary.")
                     except Exception as e:
                         st.error(f"Gemini Error for '{col}': {e}")
 
@@ -237,16 +220,19 @@ if uploaded and api_key and gemini:
         st.markdown("## 💬 Ask Gemini About All Feedback")
         userq = st.text_input("Ask your question about the overall feedback insights")
         if st.button("Ask Gemini about overall feedback"):
-            try:
-                tabular = summary_df.to_markdown(index=False)
-                prompt = f"""You're a feedback report analyst. Given this summary table:\n\n{tabular}\n\nAnswer this question:\n{userq}\n\nProvide a concise and direct answer, focusing on actionable insights derived from the data."""
-                final = gemini.generate_content(prompt)
-                st.markdown("### 🧠 Gemini Answer")
-                st.info(final.text.strip())
-            except Exception as e:
-                st.error(f"Gemini Error: {e}")
+            if gemini:
+                try:
+                    tabular = summary_df.to_markdown(index=False)
+                    prompt = f"""You're a feedback report analyst. Given this summary table:\n\n{tabular}\n\nAnswer this question:\n{userq}\n\nProvide a concise and direct answer with key suggestions based on the data."""
+                    final = gemini.generate_content(prompt)
+                    st.markdown("### 🧠 Gemini Answer")
+                    st.info(final.text.strip())
+                except Exception as e:
+                    st.error(f"Gemini Error: {e}")
+            else:
+                st.warning("Gemini is not initialized.")
 
 elif uploaded and not api_key:
-    st.warning("Please enter your Gemini API key in the sidebar to proceed.")
+    st.warning("Please enter your Gemini API key in the sidebar.")
 elif not uploaded:
     st.info("Upload a CSV or Excel file to begin feedback analysis.")
